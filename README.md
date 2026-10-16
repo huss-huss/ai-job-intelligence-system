@@ -1,20 +1,76 @@
-# AI Job Intelligence Automation System
+# FirstFetch — AI Job Intelligence
 
-Production-style AI automation: scrape job listings → queue → AI analysis → database → API → dashboard.
+[![CI](https://github.com/huss-huss/ai-job-intelligence-system/actions/workflows/ci.yml/badge.svg)](https://github.com/huss-huss/ai-job-intelligence-system/actions/workflows/ci.yml)
 
-**Stack:** FastAPI, RQ (Redis), PostgreSQL + pgvector, Next.js, Tailwind, ShadCN-style UI.
+FirstFetch pulls listings from public job APIs, scores each one against **your** profile with an explainable 0–100 score, and sends the strong matches to Notion.
 
----
+I built it because job boards rank by recency, not fit, and most "remote" listings quietly require living in the US. FirstFetch reads the location and work-authorization rules first, so jobs you can't apply for never reach the top of the list.
 
-## Repository structure
-
+```text
+$ python -m worker.cli discover --top 3
+Score  Elig  Title                                             Company                 Source
+----------------------------------------------------------------------------------------------------
+   52  ?     Senior .NET Software Engineer                     OkWhen                  remoteok
+             Title matches target role 'software engineer' · Skills: typescript, aws · Seniority fits (senior) · ...
+   51  ?     Senior Backend Engineer Build AI Agents           Salesforge              remoteok
+             Title matches target role 'backend' · Skills: agents · Seniority fits (senior) · Location not specified
+   47  ?     Senior React Full stack Developer                 Lemon.io                remoteok
+             Target role mentioned in description, not title · Skills: python, llm, agents, node, typescript ...
+----------------------------------------------------------------------------------------------------
+117 fetched · 115 unique · 57 not open to your location · 0 LLM calls (0 tokens)
 ```
-ai-job-intelligence-system/
-├── backend/          # FastAPI API, DB models, queue client
-├── worker/           # RQ tasks: scraper + AI analysis + scoring
-├── frontend/         # Next.js dashboard
-├── infra/            # Docker Compose, .env.example
-└── docs/             # SRS, architecture blueprint, deployment guide
+<sub>Real output from 2026-10-16 using the rules-only extractor (no API key).</sub>
+
+## How it works
+
+```text
+ sources ──► fetch ──► dedupe ──► rules extract ──► pre-score ──► LLM extract* ──► score ──► Postgres / Notion / webhook
+ (6 APIs +   (retry,   (per source   (skills,          (cheap)       (*only jobs      (0-100 with
+  Playwright) throttle) + across      seniority,                       that pre-score   reasons)
+                        boards)       salary, risks)                   ≥ 35)
+```
+
+- **Sources** (`worker/sources/`): Remotive, RemoteOK, Arbeitnow, Himalayas, any Greenhouse or Lever careers board, plus an opt-in Playwright scraper for sites without an API. All requests go through one HTTP client with throttling, exponential backoff with jitter, and `Retry-After` support.
+- **Extraction** (`worker/ai.py`): keyword rules by default. With `OPENAI_API_KEY`, or `LLM_BASE_URL` pointing at any OpenAI-compatible server such as Ollama, a strict JSON schema is sent and the reply is validated with Pydantic. Any failure falls back to rules instead of failing the run. Token usage is recorded per job.
+- **Scoring** (`worker/matching.py`): deterministic, so it's testable and auditable. The LLM supplies facts; it doesn't decide the score.
+
+  | Component | Points | Notes |
+  |---|---|---|
+  | Role | 25 | target title in the job title (5 if only in the description) |
+  | Skills | 35 | weighted coverage of your top skills; halved for off-target titles |
+  | Location | 15 | "USA only", work-authorization clauses, and on-site roles make a job **ineligible** (score capped at 20) |
+  | Seniority | 10 | |
+  | Salary | 10 | against `min_salary_usd`; non-USD treated as unknown rather than guessed |
+  | Recency | 5 | |
+  | Risk flags | −10 each | commission-only, unpaid, upfront fees, vague postings |
+
+- **Notion** (`worker/notion.py`): upserts keyed by job URL, so re-runs update scores without duplicating pages. The `Status` you set in Notion is never overwritten.
+
+**Stack:** Python 3.12, FastAPI, SQLAlchemy + Alembic, PostgreSQL (pgvector), Redis + RQ, httpx, Pydantic, Next.js dashboard, Docker Compose, GitHub Actions.
+
+## Quick start (no database)
+
+```bash
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r backend/requirements.txt -r worker/requirements.txt
+cp profile.example.yaml profile.yaml        # edit titles, skills, location, salary floor
+python -m worker.cli discover --top 15
+python -m worker.cli discover --sources sources.example.yaml --json results.json
+```
+
+### Notion
+
+1. Create an internal integration at https://www.notion.so/my-integrations and share a database with it.
+2. Set `NOTION_TOKEN` and `NOTION_DATABASE_ID` in `.env`.
+3. `python -m worker.cli notion-setup` adds the properties FirstFetch writes.
+4. `python -m worker.cli discover --notion` syncs eligible jobs at or above `notify_threshold`.
+
+## Tests
+
+```bash
+pip install pytest ruff
+pytest          # 56 tests, offline: adapters run against trimmed real API responses
+ruff check worker tests
 ```
 
 ---
@@ -25,7 +81,7 @@ ai-job-intelligence-system/
 
 ```bash
 cp infra/.env.example .env
-# Edit .env: set OPENAI_API_KEY if you want LLM extraction (otherwise heuristics are used).
+# Optional: OPENAI_API_KEY (or LLM_BASE_URL for a local model), NOTION_TOKEN, NOTION_DATABASE_ID
 ```
 
 ### 2. Virtual environment (recommended)
@@ -123,11 +179,15 @@ docker compose -f infra/docker-compose.yml up -d --build
 
 ## Adding a job source
 
+`config.type` picks the adapter; the other keys are adapter options (see `sources.example.yaml`).
+
 ```bash
 curl -X POST http://localhost:8000/api/sources \
   -H "Content-Type: application/json" \
-  -d '{"name": "Example Board", "base_url": "https://example.com/jobs", "enabled": true}'
+  -d '{"name": "Remotive · Python", "base_url": "https://remotive.com", "config": {"type": "remotive", "search": "python"}}'
 ```
+
+Sources created before adapters existed (no `config.type`) keep working through the Playwright `html` adapter.
 
 Then trigger a scrape from the dashboard or:
 
@@ -137,13 +197,16 @@ curl -X POST http://localhost:8000/api/scrape -H "Content-Type: application/json
 
 ---
 
+## Limitations and next steps
+
+- RemoteOK and Himalayas return shortened descriptions, so skill matches on those sources are under-counted. Fetching the full posting page is the next improvement.
+- Salary scoring only understands annual USD. Hourly and other currencies count as unknown.
+- The pgvector `embeddings` table exists but isn't used yet. Semantic similarity against a CV is planned as an extra scoring component.
+- Respect each API's terms: Remotive asks for a few requests per day, and RemoteOK and Arbeitnow ask for links back to listings.
+
 ## Docs
 
-- [PROJECT_HANDOFF.md](PROJECT_HANDOFF.md) — **Detailed handoff: what was built (for collaborators)**
-- [PROJECT_OVERVIEW.md](PROJECT_OVERVIEW.md) — Project idea & overview (for clients; recreate if missing)
-- [docs/ai_job_intelligence_SRS.md](docs/ai_job_intelligence_SRS.md) — Requirements
-- [docs/ai_job_intelligence_architecture_blueprint.md](docs/ai_job_intelligence_architecture_blueprint.md) — Architecture and data flow
-- [DEPLOYMENT.md](DEPLOYMENT.md) — VPS deploy and Docker
-- [COMPLETE_SETUP.md](COMPLETE_SETUP.md) — Firewall, Postgres password, CI/CD
-- [docs/TESTING_AND_VERIFICATION.md](docs/TESTING_AND_VERIFICATION.md) — Testing
-- [docs/PRODUCTION_TEST_PLAN.md](docs/PRODUCTION_TEST_PLAN.md) — Production test plan
+- [docs/ai_job_intelligence_SRS.md](docs/ai_job_intelligence_SRS.md): requirements
+- [docs/ai_job_intelligence_architecture_blueprint.md](docs/ai_job_intelligence_architecture_blueprint.md): architecture and data flow
+- [DEPLOYMENT.md](DEPLOYMENT.md): VPS deploy and Docker
+- [docs/TESTING_AND_VERIFICATION.md](docs/TESTING_AND_VERIFICATION.md): testing
