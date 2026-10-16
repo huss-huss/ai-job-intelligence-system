@@ -12,6 +12,8 @@ RUN pip install --no-cache-dir -r worker/requirements.txt
 
 COPY backend/ backend/
 COPY worker/ worker/
+# profile.example.yaml always; profile.yaml too if you created one
+COPY profile*.yaml ./
 
 # RQ loads worker.tasks; worker.tasks imports app from backend
 ENV PYTHONPATH=/app/backend:/app

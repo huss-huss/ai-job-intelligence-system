@@ -41,11 +41,13 @@ def _source_config(source: Source, params: dict | None) -> dict:
 
 
 def _load_profile() -> CandidateProfile:
-    path = Path(settings.profile_path)
-    if not path.exists():
-        logger.warning("Profile %s not found, scoring with defaults (copy profile.example.yaml)", path)
-        return CandidateProfile()
-    return load_profile(path)
+    example = Path(__file__).resolve().parent.parent / "profile.example.yaml"
+    for path in (Path(settings.profile_path), example):
+        if path.exists():
+            if path == example:
+                logger.warning("%s not found, scoring with profile.example.yaml", settings.profile_path)
+            return load_profile(path)
+    return CandidateProfile()
 
 
 def _to_posting(job: JobRaw) -> JobPosting:

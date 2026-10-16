@@ -56,8 +56,11 @@ services:
       REDIS_URL: redis://redis:6379/0
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+      LLM_BASE_URL: ${LLM_BASE_URL:-}
+      PROFILE_PATH: ${PROFILE_PATH:-/app/profile.yaml}
+      NOTION_TOKEN: ${NOTION_TOKEN:-}
+      NOTION_DATABASE_ID: ${NOTION_DATABASE_ID:-}
       ALERT_WEBHOOK_URL: ${ALERT_WEBHOOK_URL:-}
-      ALERT_SCORE_THRESHOLD: ${ALERT_SCORE_THRESHOLD:-0.7}
     depends_on:
       postgres:
         condition: service_healthy

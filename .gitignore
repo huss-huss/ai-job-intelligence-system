@@ -42,3 +42,7 @@ PROJECT_HANDOFF.md
 scripts/PROJECT_HANDOFF.md
 COMPLETE_SETUP.md
 MANUAL_SETUP_STEPS.md
+
+# Personal scoring profile and source list
+profile.yaml
+sources.yaml
