@@ -184,3 +184,10 @@ def test_html_to_text_keeps_structure_and_drops_scripts():
     text = html_to_text(html)
     assert "Role" in text and "- Python" in text and "x()" not in text
     assert html_to_text("&lt;p&gt;escaped&lt;/p&gt;") == "escaped"
+
+
+def test_fix_mojibake_repairs_double_encoded_text():
+    from worker.text import fix_mojibake
+
+    assert fix_mojibake("JumpCloudÂ® is â€œgreatâ€\x9d") .startswith("JumpCloud® is “great")
+    assert fix_mojibake("plain text") == "plain text"

@@ -157,3 +157,24 @@ def test_notion_headers_carry_version_and_token():
     NotionSync("tok", "db", http=mock_http(handler)).find_page("https://x")
     assert seen.headers["Authorization"] == "Bearer tok"
     assert seen.headers["Notion-Version"]
+
+
+def test_same_job_on_two_boards_is_scored_once_keeping_longer_description():
+    from worker.pipeline import dedupe_across_sources
+
+    a = JobPosting(source="remotive", external_id="1", url="https://a", title="Senior Shopify Developer",
+                   company="Sanctuary Computer Inc", description="short")
+    b = JobPosting(source="remoteok", external_id="9", url="https://b", title="Senior Shopify Developer",
+                   company="Sanctuary Computer", description="a much longer description")
+    c = JobPosting(source="remoteok", external_id="7", url="https://c", title="Backend Engineer", company="Other")
+    kept = dedupe_across_sources([a, b, c])
+    assert {p.url for p in kept} == {"https://b", "https://c"}
+
+
+def test_off_target_title_gets_half_skill_credit():
+    from worker.matching import score_job
+
+    on = score_job(GOOD, PROFILE, now=NOW)
+    off = score_job(JobPosting(**{**GOOD.__dict__, "title": "Senior React Developer"}), PROFILE, now=NOW)
+    assert off.breakdown["skills"] == round(on.breakdown["skills"] / 2, 1)
+    assert off.score < on.score

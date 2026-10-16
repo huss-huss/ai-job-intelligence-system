@@ -1,0 +1,19 @@
+# Sources for `python -m worker.cli discover --sources sources.yaml`
+# The same dicts can be stored in the dashboard as a Source's config.
+sources:
+  - type: remotive          # https://remotive.com/api — keep to a few runs per day
+    search: python
+  - type: remoteok          # https://remoteok.com/api — link back to listings
+    keywords: [python, backend, ai, llm]
+  - type: himalayas
+    limit: 20
+    keywords: [python, backend, engineer]
+  - type: arbeitnow
+    keywords: [python, backend]
+  # Company career boards
+  - type: greenhouse
+    name: anthropic
+    board: anthropic
+    keywords: [engineer]
+  - type: lever
+    company: leverdemo

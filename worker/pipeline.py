@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Any
@@ -16,6 +17,26 @@ logger = logging.getLogger(__name__)
 
 # Only spend LLM tokens on jobs that already look promising from cheap rules.
 LLM_PRESCORE_THRESHOLD = 35
+
+
+_COMPANY_SUFFIXES = re.compile(r"\b(inc|llc|ltd|gmbh|corp|co|company|limited)\b\.?")
+
+
+def cross_source_key(posting: JobPosting) -> str:
+    """Same job reposted on several boards: normalized title + company."""
+    company = _COMPANY_SUFFIXES.sub("", (posting.company or "").lower())
+    norm = lambda s: re.sub(r"[^a-z0-9]+", " ", s.lower()).strip()  # noqa: E731
+    return f"{norm(posting.title)}|{norm(company)}"
+
+
+def dedupe_across_sources(postings: list[JobPosting]) -> list[JobPosting]:
+    """Keep one posting per cross-source key, preferring the most detailed description."""
+    best: dict[str, JobPosting] = {}
+    for p in postings:
+        key = cross_source_key(p)
+        if key not in best or len(p.description or "") > len(best[key].description or ""):
+            best[key] = p
+    return list(best.values())
 
 
 @dataclass
@@ -89,7 +110,7 @@ def discover(
 ) -> DiscoveryReport:
     """Run every source; one failing source is reported, not fatal."""
     report = DiscoveryReport()
-    seen: set[str] = set()
+    collected: list[JobPosting] = []
     owns_client = http is None
     http = http or HttpClient()
     try:
@@ -102,18 +123,17 @@ def discover(
                 report.errors[label] = str(exc)
                 continue
             report.fetched += len(postings)
-            for posting in postings:
-                if posting.content_hash in seen:
-                    continue
-                seen.add(posting.content_hash)
-                scored = analyze(posting, profile, extractor, now=now)
-                if scored.extraction.method == "llm":
-                    report.llm_calls += 1
-                    report.input_tokens += scored.extraction.input_tokens
-                    report.output_tokens += scored.extraction.output_tokens
-                report.jobs.append(scored)
+            collected.extend(postings)
     finally:
         if owns_client:
             http.close()
+
+    for posting in dedupe_across_sources(collected):
+        scored = analyze(posting, profile, extractor, now=now)
+        if scored.extraction.method == "llm":
+            report.llm_calls += 1
+            report.input_tokens += scored.extraction.input_tokens
+            report.output_tokens += scored.extraction.output_tokens
+        report.jobs.append(scored)
     report.jobs.sort(key=lambda j: j.score, reverse=True)
     return report

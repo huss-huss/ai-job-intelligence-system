@@ -110,7 +110,7 @@ def score_job(
         breakdown["role"] = WEIGHTS["role"]
         reasons.append(f"Title matches target role {title_hit!r}")
     elif any(_contains(body, t) for t in profile.target_titles):
-        breakdown["role"] = WEIGHTS["role"] * 0.4
+        breakdown["role"] = WEIGHTS["role"] * 0.2
         reasons.append("Target role mentioned in description, not title")
     else:
         breakdown["role"] = 0
@@ -120,7 +120,9 @@ def score_job(
     if profile.skills:
         top_weights = sorted(profile.skills.values(), reverse=True)[:8]
         coverage = sum(profile.skills[s] for s in matched) / sum(top_weights)
-        breakdown["skills"] = round(WEIGHTS["skills"] * min(coverage, 1.0), 1)
+        # Skills listed in an off-target role's description are weak evidence of fit.
+        relevance = 1.0 if title_hit else 0.5
+        breakdown["skills"] = round(WEIGHTS["skills"] * min(coverage, 1.0) * relevance, 1)
         if matched:
             reasons.append(f"Skills: {', '.join(sorted(matched, key=lambda s: -profile.skills[s]))}")
     else:

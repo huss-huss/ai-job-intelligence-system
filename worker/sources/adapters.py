@@ -15,7 +15,7 @@ import re
 from typing import Any
 
 from worker.sources.base import HttpClient, JobPosting, parse_datetime, to_number
-from worker.text import html_to_text
+from worker.text import fix_mojibake, html_to_text
 
 _SALARY_RE = re.compile(r"(\d+(?:[.,]\d+)?)\s*(k)?", re.IGNORECASE)
 
@@ -94,8 +94,8 @@ class RemoteOKAdapter:
             source="remoteok",
             external_id=str(j["id"]),
             url=j.get("url") or j.get("apply_url"),
-            title=j["position"].strip(),
-            company=j.get("company") or None,
+            title=fix_mojibake(j["position"].strip()),
+            company=fix_mojibake(j.get("company") or "") or None,
             location=j.get("location") or None,
             description=html_to_text(j.get("description")),
             posted_at=parse_datetime(j.get("date") or j.get("epoch")),

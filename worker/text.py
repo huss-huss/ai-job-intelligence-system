@@ -32,6 +32,24 @@ class _TextExtractor(HTMLParser):
             self.parts.append(data)
 
 
+def fix_mojibake(value: str) -> str:
+    """Repair UTF-8 text that was decoded as Latin-1 upstream ("JumpCloudÂ®" -> "JumpCloud®")."""
+    if not any(marker in value for marker in ("Â", "â€", "Ã")):
+        return value
+    raw = bytearray()
+    for ch in value:
+        try:
+            raw += ch.encode("cp1252")
+        except UnicodeEncodeError:
+            if ord(ch) > 0xFF:  # a real non-Latin character: the text wasn't mis-decoded
+                return value
+            raw.append(ord(ch))  # bytes cp1252 leaves undefined (0x81, 0x8D, 0x9D...) came through as-is
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return value
+
+
 def html_to_text(value: str | None) -> str:
     """Strip tags, decode entities, and collapse whitespace while keeping paragraph breaks.
 
@@ -39,7 +57,7 @@ def html_to_text(value: str | None) -> str:
     """
     if not value:
         return ""
-    raw = html.unescape(value) if "&lt;" in value else value
+    raw = fix_mojibake(html.unescape(value) if "&lt;" in value else value)
     parser = _TextExtractor()
     parser.feed(raw)
     text = "".join(parser.parts)
