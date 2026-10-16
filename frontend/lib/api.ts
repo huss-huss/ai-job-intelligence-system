@@ -1,0 +1,169 @@
+// For production: use full URL, for dev: use empty string (rewrites handle it)
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || (typeof window !== "undefined" ? window.location.origin.replace(/:\d+$/, ":8000") : "");
+
+export type Job = {
+  id: number;
+  source_id: number;
+  url: string;
+  title: string;
+  company: string | null;
+  location: string | null;
+  description: string | null;
+  posted_at: string | null;
+  content_hash: string;
+  created_at: string;
+  analysis: {
+    seniority: string | null;
+    skills: string[] | null;
+    salary_min: number | null;
+    salary_max: number | null;
+    extracted_json: Record<string, unknown>;
+    score: number;
+    created_at: string;
+  } | null;
+};
+
+export type Source = {
+  id: number;
+  name: string;
+  base_url: string;
+  config: Record<string, unknown> | null;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+export type Run = {
+  id: number;
+  type: string;
+  source_id: number | null;
+  status: string;
+  started_at: string;
+  ended_at: string | null;
+  stats: Record<string, unknown> | null;
+};
+
+export type JobsResponse = {
+  items: Job[];
+  total: number;
+  page: number;
+  page_size: number;
+  pages: number;
+};
+
+export async function fetchHealth(): Promise<{ status: string }> {
+  const res = await fetch(`${API_BASE}/api/health`);
+  if (!res.ok) throw new Error("Health check failed");
+  return res.json();
+}
+
+export async function fetchJobs(params: {
+  source?: number;
+  min_score?: number;
+  q?: string;
+  page?: number;
+  page_size?: number;
+}): Promise<JobsResponse> {
+  const sp = new URLSearchParams();
+  if (params.source != null) sp.set("source", String(params.source));
+  if (params.min_score != null) sp.set("min_score", String(params.min_score));
+  if (params.q) sp.set("q", params.q);
+  if (params.page != null) sp.set("page", String(params.page));
+  if (params.page_size != null) sp.set("page_size", String(params.page_size));
+  const res = await fetch(`${API_BASE}/api/jobs?${sp}`);
+  if (!res.ok) throw new Error("Failed to fetch jobs");
+  return res.json();
+}
+
+export async function fetchJob(id: number): Promise<Job> {
+  const res = await fetch(`${API_BASE}/api/jobs/${id}`);
+  if (!res.ok) throw new Error("Job not found");
+  return res.json();
+}
+
+export async function fetchSources(): Promise<Source[]> {
+  const res = await fetch(`${API_BASE}/api/sources`);
+  if (!res.ok) throw new Error("Failed to fetch sources");
+  return res.json();
+}
+
+export async function fetchRuns(params?: { type?: string; limit?: number }): Promise<Run[]> {
+  const sp = new URLSearchParams();
+  if (params?.type) sp.set("type", params.type);
+  if (params?.limit != null) sp.set("limit", String(params.limit));
+  const res = await fetch(`${API_BASE}/api/runs?${sp}`);
+  if (!res.ok) throw new Error("Failed to fetch runs");
+  return res.json();
+}
+
+export async function triggerScrape(sourceId?: number): Promise<{ job_id?: string; jobs?: { source_id: number; job_id: string }[]; message: string }> {
+  const res = await fetch(`${API_BASE}/api/scrape`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(sourceId != null ? { source_id: sourceId } : {}),
+  });
+  if (!res.ok) throw new Error("Scrape trigger failed");
+  return res.json();
+}
+
+export async function triggerAnalyze(jobIds?: number[]): Promise<{ job_id: string; message: string; job_count: number }> {
+  const res = await fetch(`${API_BASE}/api/analyze`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(jobIds != null ? { job_ids: jobIds } : {}),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const msg = typeof data?.detail === "string" ? data.detail : Array.isArray(data?.detail) ? data.detail.map((d: { msg?: string }) => d?.msg).filter(Boolean).join(", ") : "Analyze trigger failed";
+    throw new Error(msg);
+  }
+  return data;
+}
+
+export async function createTestJobs(): Promise<{ message: string; inserted: number; skipped: number; total: number }> {
+  const res = await fetch(`${API_BASE}/api/jobs/test`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    let msg = typeof data?.detail === "string" ? data.detail : "Failed to create test jobs";
+    if (res.status === 405) {
+      msg = "Method Not Allowed - backend needs restart to register /api/jobs/test route";
+    }
+    throw new Error(msg);
+  }
+  return data;
+}
+
+export async function clearRuns(): Promise<{ message: string; deleted: number }> {
+  const res = await fetch(`${API_BASE}/api/runs`, {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    let msg = typeof data?.detail === "string" ? data.detail : "Failed to clear runs";
+    if (res.status === 405) {
+      msg = "Method Not Allowed - backend needs restart to register DELETE /api/runs route";
+    }
+    throw new Error(msg);
+  }
+  return data;
+}
+
+export async function clearJobs(): Promise<{ message: string; deleted_jobs: number; deleted_analyses: number }> {
+  const res = await fetch(`${API_BASE}/api/jobs`, {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    let msg = typeof data?.detail === "string" ? data.detail : "Failed to clear jobs";
+    if (res.status === 405) {
+      msg = "Method Not Allowed - backend needs restart to register DELETE /api/jobs route";
+    }
+    throw new Error(msg);
+  }
+  return data;
+}

@@ -1,0 +1,19 @@
+FROM python:3.12-slim
+
+WORKDIR /app
+# Backend deps (for app.*)
+COPY backend/requirements.txt backend/
+RUN pip install --no-cache-dir -r backend/requirements.txt
+# Worker deps
+COPY worker/requirements.txt worker/
+RUN pip install --no-cache-dir -r worker/requirements.txt
+# Playwright (optional - install browsers if you need scraping)
+# RUN playwright install chromium && playwright install-deps
+
+COPY backend/ backend/
+COPY worker/ worker/
+
+# RQ loads worker.tasks; worker.tasks imports app from backend
+ENV PYTHONPATH=/app/backend:/app
+EXPOSE 0
+CMD ["rq", "worker", "default", "--path", "/app", "--with-scheduler"]

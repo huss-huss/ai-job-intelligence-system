@@ -1,0 +1,30 @@
+# AI Job Intelligence - Backend
+# Python 3.11+
+
+# Web
+fastapi==0.115.6
+uvicorn[standard]==0.32.1
+
+# Database
+sqlalchemy[asyncio]==2.0.36
+asyncpg==0.30.0
+psycopg2-binary==2.9.10
+pgvector==0.3.6
+alembic==1.14.0
+
+# Redis & Queue
+redis==5.2.1
+rq==2.0.0
+
+# Validation & settings
+pydantic==2.10.3
+pydantic-settings==2.6.1
+
+# HTTP client
+httpx==0.28.1
+
+# Observability
+structlog==24.4.0
+
+# Security & utilities
+python-dotenv==1.0.1
