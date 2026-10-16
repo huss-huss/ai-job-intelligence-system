@@ -1,0 +1,54 @@
+# Copy to profile.yaml and edit. FirstFetch scores every job against this file.
+
+name: Backend & AI Systems Engineer
+
+# A job whose title contains one of these gets full "role" points.
+target_titles:
+  - backend
+  - python
+  - ai engineer
+  - machine learning engineer
+  - platform engineer
+  - data engineer
+  - software engineer
+  - automation
+
+# Titles containing these are skipped entirely.
+exclude_titles:
+  - sales
+  - account executive
+  - recruiter
+  - designer
+  - marketing
+  - customer success
+
+# skill: weight (1 = nice to have, 3 = core). Aliases like postgres/PostgreSQL are built in.
+skills:
+  python: 3
+  fastapi: 3
+  llm: 3
+  agents: 2
+  postgres: 2
+  redis: 2
+  celery: 2
+  scraping: 2
+  etl: 2
+  docker: 2
+  node: 1
+  typescript: 1
+  rag: 1
+  aws: 1
+  gcp: 1
+
+seniority: [mid, senior]
+
+location:
+  country: Ethiopia
+  eligible_terms: [worldwide, anywhere, global, ethiopia, africa, emea]
+  accepts_onsite: false
+
+min_salary_usd: 30000
+max_age_days: 30
+
+# Jobs at or above this score are synced to Notion / sent to the webhook.
+notify_threshold: 70
