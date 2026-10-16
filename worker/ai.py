@@ -1,134 +1,188 @@
-"""AI extraction and deterministic scoring."""
+"""Structured extraction of job facts, by LLM or by rules.
 
-import hashlib
+The LLM only extracts facts (seniority, salary, risk flags...). Scoring happens in
+worker.matching so it stays deterministic. Any OpenAI-compatible endpoint works,
+including a local Ollama server (base_url=http://localhost:11434/v1).
+"""
+
+from __future__ import annotations
+
 import json
+import logging
 import re
-from typing import Any
+from dataclasses import dataclass
+from typing import Literal, Protocol
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
-# Optional OpenAI - graceful if not installed
-try:
-    from openai import OpenAI
-except ImportError:
-    OpenAI = None
+from worker.matching import detect_seniority
+from worker.sources.adapters import parse_salary_text
+from worker.sources.base import JobPosting
+
+logger = logging.getLogger(__name__)
+
+RiskFlag = Literal["commission_only", "unpaid", "vague_description", "requires_upfront_payment", "not_a_job"]
 
 
-EXTRACTION_SCHEMA = {
-    "seniority": "junior|mid|senior|lead",
-    "skills": "list of strings",
-    "salary": {"min": "number or 0", "max": "number or 0", "currency": "USD", "period": "hour|month|year"},
-    "remote": "boolean",
-    "role_family": "backend|data|ml|devops|other",
-    "summary": "short string",
-    "risk_flags": "list of strings e.g. vague, commission_only",
-}
+class Salary(BaseModel):
+    min: float | None = None
+    max: float | None = None
+    currency: str | None = None
+    period: Literal["hour", "month", "year"] | None = None
 
 
 class ExtractedFields(BaseModel):
-    """Validated extraction output."""
-
-    seniority: str | None = Field(None, description="junior|mid|senior|lead")
+    seniority: Literal["intern", "junior", "mid", "senior", "lead"] | None = None
     skills: list[str] = Field(default_factory=list)
-    salary: dict[str, Any] = Field(default_factory=lambda: {"min": 0, "max": 0, "currency": "USD", "period": "year"})
-    remote: bool = False
-    role_family: str | None = None
+    salary: Salary = Field(default_factory=Salary)
+    remote: bool | None = None
+    location_restriction: str | None = Field(None, description="Countries/regions applicants must be in, if stated")
+    role_family: Literal["backend", "fullstack", "frontend", "data", "ml", "devops", "other"] | None = None
     summary: str | None = None
-    risk_flags: list[str] = Field(default_factory=list)
+    risk_flags: list[RiskFlag] = Field(default_factory=list)
 
 
-def _deterministic_score(extracted: ExtractedFields, text: str) -> float:
-    """Compute a stable score from rules (no LLM)."""
-    score = 0.5  # base
-    text_lower = (text or "").lower()
-
-    # Seniority
-    if extracted.seniority in ("senior", "lead"):
-        score += 0.1
-    if extracted.role_family:
-        score += 0.05
-
-    # Remote
-    if extracted.remote or "remote" in text_lower:
-        score += 0.1
-
-    # Salary mentioned
-    if (extracted.salary.get("min") or 0) > 0 or (extracted.salary.get("max") or 0) > 0:
-        score += 0.1
-
-    # Skills count
-    if len(extracted.skills) >= 3:
-        score += 0.05
-
-    # Risk flags
-    for _ in extracted.risk_flags:
-        score -= 0.05
-    if "vague" in extracted.risk_flags or "commission_only" in extracted.risk_flags:
-        score -= 0.1
-
-    return max(0.0, min(1.0, round(score, 3)))
+@dataclass
+class Extraction:
+    fields: ExtractedFields
+    method: str  # "llm" or "heuristic"
+    input_tokens: int = 0
+    output_tokens: int = 0
 
 
-def extract_with_llm(description: str, api_key: str, model: str = "gpt-4o-mini") -> ExtractedFields:
-    """Call LLM to extract structured fields. Falls back to heuristic if no API key."""
-    if not api_key or not OpenAI:
-        return _heuristic_extract(description)
+class Extractor(Protocol):
+    def extract(self, posting: JobPosting) -> Extraction: ...
 
-    client = OpenAI(api_key=api_key)
-    prompt = f"""Extract job attributes from this job description. Return ONLY valid JSON matching this schema:
-{json.dumps(EXTRACTION_SCHEMA, indent=2)}
 
-Job description:
----
-{description[:6000]}
----
+# --- rules -----------------------------------------------------------------------
 
-Return only the JSON object, no markdown or explanation."""
+_SKILL_TERMS = [
+    "python", "fastapi", "django", "flask", "node.js", "typescript", "javascript", "go", "rust", "java",
+    "postgresql", "mysql", "mongodb", "redis", "celery", "kafka", "docker", "kubernetes", "aws", "gcp",
+    "azure", "terraform", "llm", "openai", "langchain", "rag", "pytorch", "airflow", "spark", "react",
+]  # fmt: skip
+_RISK_PATTERNS: dict[str, str] = {
+    "commission_only": r"commission[- ]only|100% commission",
+    "unpaid": r"\bunpaid\b|no salary|equity only",
+    "requires_upfront_payment": r"(pay|purchase) (a|the) (fee|starter kit)|registration fee",
+}
 
+
+class HeuristicExtractor:
+    """Keyword rules. Free, instant, and good enough when no LLM is configured."""
+
+    def extract(self, posting: JobPosting) -> Extraction:
+        text = f"{posting.title}\n{posting.description or ''}".lower()
+        skills = [s for s in _SKILL_TERMS if re.search(rf"(?<![\w.]){re.escape(s)}(?![\w])", text)]
+        smin, smax = posting.salary_min, posting.salary_max
+        if smin is None and smax is None:
+            smin, smax = parse_salary_text(posting.salary_text)
+        flags = [flag for flag, pattern in _RISK_PATTERNS.items() if re.search(pattern, text)]
+        if len((posting.description or "").split()) < 40:
+            flags.append("vague_description")
+        fields = ExtractedFields(
+            seniority=detect_seniority(posting.title),
+            skills=skills,
+            salary=Salary(min=smin, max=smax, currency=posting.salary_currency, period="year" if smax else None),
+            remote=posting.remote,
+            role_family=_role_family(text),
+            risk_flags=flags,
+        )
+        return Extraction(fields=fields, method="heuristic")
+
+
+def _role_family(text: str) -> str:
+    for family, terms in (
+        ("ml", ["machine learning", "ml engineer", "llm", "ai engineer"]),
+        ("data", ["data engineer", "etl", "data pipeline", "analytics engineer"]),
+        ("devops", ["devops", "sre", "site reliability", "platform engineer"]),
+        ("fullstack", ["full-stack", "fullstack", "full stack"]),
+        ("frontend", ["frontend", "front-end", "react developer"]),
+        ("backend", ["backend", "back-end", "api", "server-side"]),
+    ):
+        if any(t in text for t in terms):
+            return family
+    return "other"
+
+
+# --- LLM -------------------------------------------------------------------------
+
+SYSTEM_PROMPT = (
+    "You extract facts from job postings. Only report what the posting states; use null when it "
+    "doesn't say. Salary numbers are plain numbers (120000, not '120k'). location_restriction lists "
+    "the countries or regions applicants must live in, if any. risk_flags marks postings that look "
+    "commission-only, unpaid, ask for money, are too vague to evaluate, or are not real job offers."
+)
+
+
+def _strict_schema(schema: dict) -> dict:
+    """OpenAI strict mode needs additionalProperties=false and every property required."""
+    schema = dict(schema)
+    if schema.get("type") == "object" or "properties" in schema:
+        schema["additionalProperties"] = False
+        schema["required"] = list(schema.get("properties", {}))
+        schema["properties"] = {k: _strict_schema(v) for k, v in schema.get("properties", {}).items()}
+    for key in ("$defs", "definitions"):
+        if key in schema:
+            schema[key] = {k: _strict_schema(v) for k, v in schema[key].items()}
+    for key in ("anyOf", "allOf"):
+        if key in schema:
+            schema[key] = [_strict_schema(s) for s in schema[key]]
+    if "items" in schema:
+        schema["items"] = _strict_schema(schema["items"])
+    schema.pop("default", None)
+    return schema
+
+
+class LLMExtractor:
+    """OpenAI-compatible chat completions with a strict JSON schema; falls back to rules on any failure."""
+
+    def __init__(self, client, model: str, fallback: Extractor | None = None, max_chars: int = 6000) -> None:
+        self.client = client
+        self.model = model
+        self.fallback = fallback or HeuristicExtractor()
+        self.max_chars = max_chars
+        self.schema = _strict_schema(ExtractedFields.model_json_schema())
+
+    def extract(self, posting: JobPosting) -> Extraction:
+        user = (
+            f"Title: {posting.title}\nCompany: {posting.company or 'unknown'}\n"
+            f"Location: {posting.location or 'unknown'}\n\n{(posting.description or '')[: self.max_chars]}"
+        )
+        try:
+            resp = self.client.chat.completions.create(
+                model=self.model,
+                temperature=0,
+                messages=[{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": user}],
+                response_format={
+                    "type": "json_schema",
+                    "json_schema": {"name": "job_facts", "schema": self.schema, "strict": True},
+                },
+            )
+            fields = ExtractedFields.model_validate(json.loads(resp.choices[0].message.content or "{}"))
+        except (ValidationError, json.JSONDecodeError) as exc:
+            logger.warning("LLM returned invalid output for %s: %s", posting.url, exc)
+            return self.fallback.extract(posting)
+        except Exception as exc:  # network, auth, rate limit: degrade, don't fail the run
+            logger.warning("LLM call failed for %s: %s", posting.url, exc)
+            return self.fallback.extract(posting)
+        usage = getattr(resp, "usage", None)
+        return Extraction(
+            fields=fields,
+            method="llm",
+            input_tokens=getattr(usage, "prompt_tokens", 0) or 0,
+            output_tokens=getattr(usage, "completion_tokens", 0) or 0,
+        )
+
+
+def build_extractor(api_key: str = "", model: str = "gpt-4o-mini", base_url: str = "") -> Extractor:
+    """LLM extractor when a key (or a local base_url) is configured, otherwise rules."""
+    if not api_key and not base_url:
+        return HeuristicExtractor()
     try:
-        resp = client.chat.completions.create(
-            model=model,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.1,
-        )
-        content = resp.choices[0].message.content or "{}"
-        content = re.sub(r"^```\w*\n?", "", content).strip()
-        content = re.sub(r"\n?```$", "", content).strip()
-        data = json.loads(content)
-        return ExtractedFields(
-            seniority=data.get("seniority"),
-            skills=data.get("skills") or [],
-            salary=data.get("salary") or {},
-            remote=bool(data.get("remote")),
-            role_family=data.get("role_family"),
-            summary=data.get("summary"),
-            risk_flags=data.get("risk_flags") or [],
-        )
-    except Exception:
-        return _heuristic_extract(description)
-
-
-def _heuristic_extract(description: str) -> ExtractedFields:
-    """Fallback when LLM is unavailable."""
-    text = (description or "").lower()
-    seniority = None
-    for level in ("lead", "senior", "mid", "junior"):
-        if level in text:
-            seniority = level
-            break
-    skills = []
-    for skill in ("python", "fastapi", "redis", "postgresql", "react", "typescript"):
-        if skill in text:
-            skills.append(skill)
-    remote = "remote" in text or "work from home" in text
-    return ExtractedFields(
-        seniority=seniority,
-        skills=skills,
-        remote=remote,
-        role_family="backend" if any(s in text for s in ["api", "backend", "server"]) else "other",
-    )
-
-
-def compute_score(extracted: ExtractedFields, job_text: str) -> float:
-    """Deterministic score from extracted fields and raw text."""
-    return _deterministic_score(extracted, job_text)
+        from openai import OpenAI
+    except ImportError:
+        logger.warning("openai package not installed; using heuristic extraction")
+        return HeuristicExtractor()
+    client = OpenAI(api_key=api_key or "local", base_url=base_url or None)
+    return LLMExtractor(client, model)

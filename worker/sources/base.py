@@ -90,11 +90,22 @@ class HttpClient:
         self._last_request = 0.0
 
     def get_json(self, url: str, params: dict[str, Any] | None = None) -> Any:
+        return self.request_json("GET", url, params=params)
+
+    def request_json(
+        self,
+        method: str,
+        url: str,
+        *,
+        params: dict[str, Any] | None = None,
+        json: Any = None,
+        headers: dict[str, str] | None = None,
+    ) -> Any:
         last_error: Exception | None = None
         for attempt in range(self.max_retries + 1):
             self._throttle()
             try:
-                resp = self._client.get(url, params=params)
+                resp = self._client.request(method, url, params=params, json=json, headers=headers)
                 if resp.status_code in RETRYABLE_STATUS:
                     raise httpx.HTTPStatusError(f"HTTP {resp.status_code}", request=resp.request, response=resp)
                 resp.raise_for_status()
@@ -102,13 +113,14 @@ class HttpClient:
             except (httpx.TransportError, httpx.HTTPStatusError) as exc:
                 status = exc.response.status_code if isinstance(exc, httpx.HTTPStatusError) else None
                 if status is not None and status not in RETRYABLE_STATUS:
-                    raise SourceError(f"GET {url} failed with HTTP {status}") from exc
+                    detail = exc.response.text[:300]
+                    raise SourceError(f"{method} {url} failed with HTTP {status}: {detail}") from exc
                 last_error = exc
                 if attempt < self.max_retries:
                     delay = self._retry_delay(exc, attempt)
-                    logger.warning("GET %s failed (%s), retry %d in %.1fs", url, exc, attempt + 1, delay)
+                    logger.warning("%s %s failed (%s), retry %d in %.1fs", method, url, exc, attempt + 1, delay)
                     self._sleep(delay)
-        raise SourceError(f"GET {url} failed after {self.max_retries + 1} attempts: {last_error}")
+        raise SourceError(f"{method} {url} failed after {self.max_retries + 1} attempts: {last_error}")
 
     def _retry_delay(self, exc: Exception, attempt: int) -> float:
         if isinstance(exc, httpx.HTTPStatusError):

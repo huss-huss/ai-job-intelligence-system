@@ -8,11 +8,22 @@ class Settings(BaseSettings):
 
     database_url: str = "postgresql://postgres:postgres@localhost:5432/jobs"
     redis_url: str = "redis://localhost:6379/0"
+
+    # Candidate profile used for scoring (see profile.example.yaml)
+    profile_path: str = "profile.yaml"
+
+    # LLM extraction (optional). Leave the key empty to use rules only.
+    # For a local model: LLM_BASE_URL=http://localhost:11434/v1 OPENAI_MODEL=llama3.1
     openai_api_key: str = ""
     openai_model: str = "gpt-4o-mini"
+    llm_base_url: str = ""
+
+    # Notion sync (optional)
+    notion_token: str = ""
+    notion_database_id: str = ""
+
+    # Webhook alert (optional), fired for jobs at or above the profile's notify_threshold
     alert_webhook_url: str = ""
-    alert_score_threshold: float = 0.7
-    scrape_user_agent: str = "AI-Job-Intelligence/1.0 (compatible; +https://github.com/ai-job-intelligence)"
 
 
 settings = Settings()

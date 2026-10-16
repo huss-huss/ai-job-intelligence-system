@@ -29,7 +29,8 @@ class JobRaw(Base):
     location: Mapped[str | None] = mapped_column(String(512), nullable=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     posted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    content_hash: Mapped[str] = mapped_column(String(64), nullable=False, index=True)  # dedupe: hash(url+title+company)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False, index=True)  # dedupe: source + external id
+    meta: Mapped[dict | None] = mapped_column(JSONB, nullable=True)  # remote flag, tags, salary from the source
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     source: Mapped["Source"] = relationship("Source", back_populates="jobs_raw")
