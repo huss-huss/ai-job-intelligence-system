@@ -1,0 +1,19 @@
+[project]
+name = "firstfetch"
+version = "0.2.0"
+description = "Job discovery that scores listings against your profile and syncs the best matches to Notion."
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = [".", "backend"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+extend-exclude = ["frontend", "backend/alembic/versions"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+ignore = ["B008"]  # FastAPI Depends() in defaults

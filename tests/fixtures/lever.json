@@ -1,0 +1,60 @@
+[
+ {
+  "additionalPlain": "",
+  "categories": {
+   "commitment": "Regular Full Time (Salary)",
+   "department": "Customer Success",
+   "location": "Atlanta, Georgia",
+   "team": "Customer Success Team",
+   "allLocations": [
+    "Atlanta, Georgia"
+   ]
+  },
+  "createdAt": 1788199939703,
+  "descriptionPlain": "This is a test job - created by Alex Haugan, for testing candidate insights.\n\u00a0\nJoin a scaling, tight-knit team that\u2019s working directly with innovative talent acquisition teams and thought leaders across various industries and geographies to make hiring a strategic advantage for their organizations. You'll serve as an advisor to our customers and take a consultative approach to ensure customers are setup for long-term success as high performing hiring organizations using the Lever product suite.\n\u00a0\nAs a Customer Success Manager on the Customer Advocacy team, you will be our customers biggest champion and make their voice heard in everything we do- the problems we help solve, the solutions we b",
+  "description": "<div>This is a test job - created by Alex Haugan, for testing candidate insights.</div>\n<div>&nbsp;</div>\n<div><span style=\"font-size: 16px;\">Join a scaling, tight-knit team that\u2019s working directly with innovative talent acquisition teams and thought leaders across various industries and geographies to make hiring a strategic advantage for their organizations. You'll serve as an advisor to our customers and take a consultative approach to ensure customers are setup for long-term success as high performing hiring organizations using the Lever product suite.</span></div>\n<div><span style=\"font-size: 16px;\">&nbsp;</span></div>\n<div><span style=\"font-size: 16px;\">As a Customer Success Manager on",
+  "id": "ad208490-4052-4f91-a57e-433f2d1e484b",
+  "salaryRange": {
+   "min": 85000,
+   "max": 175000,
+   "currency": "USD",
+   "interval": "per-year-salary"
+  },
+  "text": "Customer Success Manager",
+  "country": "US",
+  "workplaceType": "hybrid",
+  "openingPlain": "",
+  "descriptionBodyPlain": "This is a test job - created by Alex Haugan, for testing candidate insights.\n\u00a0\nJoin a scaling, tight-knit team that\u2019s working directly with innovative talent acquisition teams and thought leaders across various industries and geographies to make hiring a strategic advantage for their organizations. You'll serve as an advisor to our customers and take a consultative approach to ensure customers are setup for long-term success as high performing hiring organizations using the Lever product suite.\n\u00a0\nAs a Customer Success Manager on the Customer Advocacy team, you will be our customers biggest champion and make their voice heard in everything we do- the problems we help solve, the solutions we b",
+  "hostedUrl": "https://jobs.lever.co/leverdemo/ad208490-4052-4f91-a57e-433f2d1e484b",
+  "applyUrl": "https://jobs.lever.co/leverdemo/ad208490-4052-4f91-a57e-433f2d1e484b/apply"
+ },
+ {
+  "additionalPlain": "",
+  "categories": {
+   "commitment": "Regular Full Time (Salary)",
+   "department": "People (HR)",
+   "location": "Houston, TX",
+   "team": "People",
+   "allLocations": [
+    "Houston, TX"
+   ]
+  },
+  "createdAt": 1787600587936,
+  "description": "",
+  "descriptionPlain": "",
+  "id": "120b5976-ee4e-4dc5-b31b-2b1ca124460c",
+  "salaryRange": {
+   "min": 150000,
+   "max": 185000,
+   "currency": "USD",
+   "interval": "per-year-salary"
+  },
+  "text": "Dentist",
+  "country": "US",
+  "workplaceType": "onsite",
+  "openingPlain": "",
+  "descriptionBodyPlain": "",
+  "hostedUrl": "https://jobs.lever.co/leverdemo/120b5976-ee4e-4dc5-b31b-2b1ca124460c",
+  "applyUrl": "https://jobs.lever.co/leverdemo/120b5976-ee4e-4dc5-b31b-2b1ca124460c/apply"
+ }
+]

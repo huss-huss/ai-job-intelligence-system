@@ -1,0 +1,72 @@
+{
+ "data": [
+  {
+   "slug": "verkaufsberater-im-einzelhandel-minijob-werkstudent-offenburg-139449",
+   "company_name": "Georg Kuhn GmbH",
+   "title": "Verkaufsberater im Einzelhandel Minijob/Werkstudent",
+   "description": "<p>Sport Kuhn ist ein echtes Offenburger Urgestein. Schon seit 80 Jahren wird unser Familienbetrieb mit viel Engagement, Begeisterung f\u00fcr den Sport und viel N\u00e4he zu unseren Kunden gef\u00fchrt.</p>\n<h2>Aufgaben</h2>\n<ul>\n<li>Fachspezifisches Beraten und Verkaufen</li>\n<li>Gewinnung von Stammkunden</li>\n<li>Aktives Anbieten unserer Serviceleistungen</li>\n<li>Annahme und Bearbeitung der Kundenbestellungen und Reklamationen</li>\n<li>\u00dcberpr\u00fcfung des Warenangebots in den Regalen bzw. Verkaufsfl\u00e4chen</li>\n<li>Unterst\u00fctzung bei Inventuren und Bestandskontrollen</li>\n</ul>\n<h2>Qualifikation</h2>\n<ul>\n<li>Interesse am Sport und Mode</li>\n<li>Sicherer Umgang mit Kunden</li>\n<li>Hohe Eigenmotivation und gut",
+   "remote": false,
+   "url": "https://www.arbeitnow.com/jobs/companies/georg-kuhn-gmbh/verkaufsberater-im-einzelhandel-minijob-werkstudent-offenburg-139449",
+   "tags": [
+    "Business Consulting"
+   ],
+   "job_types": [
+    "Unbefristeter arbeitsvertrag"
+   ],
+   "location": "Offenburg",
+   "created_at": 1792159275
+  },
+  {
+   "slug": "e-commerce-manager-pleidelsheim-436336",
+   "company_name": "AYLASHES",
+   "title": "E-Commerce Manager (m/w/d)",
+   "description": "<p>Bei AYLASHES dreht sich alles um Beauty-Produkte f\u00fcr zu Hause. F\u00fcr unseren Onlineshop und unsere n\u00e4chsten Projekte suchen wir jemanden, der gerne organisiert, eigene Ideen einbringt und Dinge zuverl\u00e4ssig umsetzt.</p>\n<p>Du betreust unseren Shop im Alltag, bereitest Aktionen vor und entwickelst unsere Inhalte und Angebote mit weiter. Dabei arbeitest du eng mit unserem Marketingteam und externen Partnern zusammen.</p>\n<h2>Aufgaben</h2>\n<ul>\n<li>Du pflegst unseren Onlineshop und h\u00e4ltst Produkte, Texte, Bilder und Preise aktuell.</li>\n<li>Du bereitest neue Produkte, Verkaufsaktionen und Kampagnen vor.</li>\n<li>Du erstellst und aktualisierst Shop-Seiten, Produktpakete und Aktionsangebote.</li>",
+   "remote": true,
+   "url": "https://www.arbeitnow.com/jobs/companies/aylashes/e-commerce-manager-pleidelsheim-436336",
+   "tags": [
+    "Remote",
+    "Marketing Manager"
+   ],
+   "job_types": [
+    "Unbefristeter arbeitsvertrag",
+    "berufserfahren"
+   ],
+   "location": "Pleidelsheim",
+   "created_at": 1792155684
+  },
+  {
+   "slug": "frontend-softwareentwickler-berlin-250708",
+   "company_name": "TecFox GmbH",
+   "title": "Frontend Softwareentwickler (m/w/d)",
+   "description": "<h2>\u00dcber uns:</h2><p>Begeisterst du dich f\u00fcr moderne Webanwendungen, gut strukturierte Software und leistungsf\u00e4hige Single-Page-Applikationen? Dann ist TecFox vielleicht genau der richtige n\u00e4chste Schritt in deiner Karriere.</p><p>Wir, die TecFox GmbH, sind ein zukunftsorientiertes IT-Dienstleistungsunternehmen verwurzelt im Raum Braunschweig/Wolfsburg. Wir \u00fcbernehmen bundesweit IT-Projekte bei namhaften Unternehmen und aus den unterschiedlichsten Branchen. Mit all unserem Wissen und unserer Erfahrung helfen wir bei der Neu- und Weiterentwicklung von IT. Die TecFox GmbH bietet Dir anspruchsvolle und komplexe Projekte in angenehmer Arbeitsatmosph\u00e4re.</p><h2>Deine Aufgaben bei uns:</h2><p>In d",
+   "remote": true,
+   "url": "https://www.arbeitnow.com/jobs/companies/tecfox-gmbh/frontend-softwareentwickler-berlin-250708",
+   "tags": [
+    "Remote",
+    "Web Development"
+   ],
+   "job_types": [
+    "Unbefristeter arbeitsvertrag",
+    "berufserfahren"
+   ],
+   "location": "Berlin",
+   "created_at": 1792155681
+  }
+ ],
+ "links": {
+  "first": "https://www.arbeitnow.com/api/job-board-api?page=1",
+  "last": null,
+  "prev": null,
+  "next": "https://www.arbeitnow.com/api/job-board-api?page=2"
+ },
+ "meta": {
+  "current_page": 1,
+  "current_page_url": "https://www.arbeitnow.com/api/job-board-api?page=1",
+  "from": 1,
+  "path": "https://www.arbeitnow.com/api/job-board-api",
+  "per_page": 300,
+  "to": 300,
+  "terms": "This is a free public API for jobs, please do not abuse. I would appreciate linking back to the site. By using the API, you agree to the terms of service present on Arbeitnow.com",
+  "info": "Jobs are updated every hour and order by the `created_at` timestamp. Use `?page=` to paginate. Read more information here: https://www.arbeitnow.com/blog/job-board-api"
+ }
+}

@@ -1,0 +1,148 @@
+{
+ "comments": "21/08/2026: Cursor pagination is now available and is the preferred way to page through the feed. Pass the nextCursor value from each response back as ?cursor=. It is faster than offset and will never return the same job twice. The offset parameter is deprecated and will be removed in a future release. 13/03/2026: The API has been updated to include the companySlug field in the response.",
+ "updatedAt": 1792159105,
+ "offset": 0,
+ "limit": 3,
+ "totalCount": 124789,
+ "nextCursor": "MjAyNi0xMC0xNlQxMzo1NzoxMC41NzYyODJafDI0MTIwMzg",
+ "jobs": [
+  {
+   "title": "Security Engineer- Corporate Information Security- Remote (Anywhere in the U.S.)",
+   "excerpt": "GuidePoint Security provides trusted cybersecurity expertise, solutions and services that help organizations make better decisions and minimize risk.",
+   "companyName": "GuidePoint Security LLC",
+   "companySlug": "guidepoint-security-llc",
+   "companyLogo": "https://cdn-images.himalayas.app/d4dtyoeavd4c9zerelckapbvyyac",
+   "employmentType": "Full Time",
+   "minSalary": null,
+   "maxSalary": null,
+   "salaryPeriod": "annual",
+   "seniority": [
+    "Mid-level"
+   ],
+   "currency": null,
+   "locationRestrictions": [
+    "United States"
+   ],
+   "timezoneRestrictions": [
+    -10,
+    -9,
+    -8,
+    -7,
+    -6,
+    -5,
+    14
+   ],
+   "categories": [
+    "Security-Engineer",
+    "Cybersecurity-Engineer",
+    "SOC-Analyst",
+    "Senior-Threat-Hunting-Engineer",
+    "Information-Security-Analyst",
+    "Corporate-Security-Engineer",
+    "Information-Security-Engineer",
+    "Information-Systems-Security-Engineer"
+   ],
+   "parentCategories": [
+    "Developer"
+   ],
+   "description": "<div class=\"content-intro\"><p>GuidePoint Security provides trusted cybersecurity expertise, solutions and services that help organizations make better decisions and minimize risk. By taking a three-tiered, holistic approach for evaluating security posture and ecosystems, GuidePoint enables some of the nation\u2019s top organizations, such as Fortune 500 companies and U.S. government agencies, to identify threats, optimize resources and integrate best-fit solutions that mitigate risk.</p></div><h3>General Description</h3><p>We are looking for a curious, technically strong Security Engineer to join our Corporate Information Security (CIS) team, focused on threat detection, threat intelligence, thre",
+   "pubDate": 1792159105,
+   "expiryDate": 1797343105,
+   "applicationLink": "https://himalayas.app/companies/guidepoint-security-llc/jobs/security-engineer-corporate-information-security-remote-anywhere-in-the-u-s",
+   "guid": "https://himalayas.app/companies/guidepoint-security-llc/jobs/security-engineer-corporate-information-security-remote-anywhere-in-the-u-s"
+  },
+  {
+   "title": "Collections and Billing Specialist",
+   "excerpt": "Position:Collections and Billing Specialist Reports to:Accounts Receivable and Billing Manager Department: Billing Location:Remote Who we are:CIEE is a nonprofit study abroad and intercultural exchange organization that transforms lives and builds bridges between individuals and nations through study abroad and international exchange experiences that help people develop skills for living in a globally interdependent andmulti-cultural world.",
+   "companyName": "CIEE Barcelona",
+   "companySlug": "ciee-barcelona",
+   "companyLogo": "",
+   "employmentType": "Full Time",
+   "minSalary": null,
+   "maxSalary": null,
+   "salaryPeriod": "annual",
+   "seniority": [
+    "Mid-level"
+   ],
+   "currency": null,
+   "locationRestrictions": [
+    "United States"
+   ],
+   "timezoneRestrictions": [
+    -10,
+    -9,
+    -8,
+    -7,
+    -6,
+    -5,
+    14
+   ],
+   "categories": [
+    "Collections-Specialist",
+    "Billing-Specialist",
+    "Accounts-Receivable-Specialist",
+    "Billing-Clerk",
+    "Collections-Analyst",
+    "Billing-And-Collections-Specialist",
+    "Billing-And-Collections-Coordinator",
+    "Credit-And-Collections-Specialist",
+    "Accounts-Receivable-Collections-Specialist",
+    "Cash-and-Collections-Specialist"
+   ],
+   "parentCategories": [
+    "Finance"
+   ],
+   "description": "<div><div><div><div><div><div><div><div><div><div><div><div><div><div><div><div><div>\n<p><strong>Position:</strong>Collections and Billing Specialist </p>\n<p><strong>Reports to:</strong>Accounts Receivable and Billing Manager<br><strong>Department:</strong> Billing<br><strong>Location:</strong>Remote</p>\n<h3>Who we are:</h3>\n<p>CIEE is a nonprofit study abroad and intercultural exchange organization that transforms lives and builds bridges between individuals and nations through study abroad and international exchange experiences that help people develop\u202fskills for living in a globally interdependent andmulti-cultural world.</p>\n<h3>Why work with us:</h3>\n<ul>\n<li>\n<strong>You will change th",
+   "pubDate": 1792159078,
+   "expiryDate": 1797343077,
+   "applicationLink": "https://himalayas.app/companies/ciee-barcelona/jobs/collections-and-billing-specialist",
+   "guid": "https://himalayas.app/companies/ciee-barcelona/jobs/collections-and-billing-specialist"
+  },
+  {
+   "title": "Customer Success Manager",
+   "excerpt": "Ready to be a Titan?  As a CSM Team Customer Success Manager, you play a crucial role in ensuring our customers\u2019 success and satisfaction.",
+   "companyName": "ServiceTitan",
+   "companySlug": "servicetitan",
+   "companyLogo": "https://cdn-images.himalayas.app/9o80c5rw8gdazzyggnhidf2tj5n5",
+   "employmentType": "Full Time",
+   "minSalary": 76900,
+   "maxSalary": 115300,
+   "salaryPeriod": "annual",
+   "seniority": [
+    "Manager"
+   ],
+   "currency": "USD",
+   "locationRestrictions": [
+    "United States"
+   ],
+   "timezoneRestrictions": [
+    -10,
+    -9,
+    -8,
+    -7,
+    -6,
+    -5,
+    14
+   ],
+   "categories": [
+    "Customer-Success-Manager",
+    "Account-Manager",
+    "Customer-Success",
+    "CSM",
+    "Customer-Success-Account-Manager",
+    "Strategic-Customer-Success-Manager",
+    "Customer-Success-Manager-EMEA",
+    "Customer-Success-and-Implementation-Manager"
+   ],
+   "parentCategories": [
+    "Customer Service",
+    "Sales"
+   ],
+   "description": "<p><b>Ready to be a Titan?</b><br>As a CSM Team Customer Success Manager, you play a crucial role in ensuring our customers\u2019 success and satisfaction. You\u2019ll be responsible for building strong relationships with our customers, understanding their needs, and empowering them to set big goals with <a href=\"https://himalayas.app/companies/servicetitan\">ServiceTitan</a> as the ultimate tool to achieve the extraordinary in their business.</p><p>You will serve as the preferred CSM to a designated list of customers assigned to the CSM Team and partner with these customers to optimize their use of <a href=\"https://himalayas.app/companies/servicetitan\">ServiceTitan</a> to drive business results. In do",
+   "pubDate": 1792159030,
+   "expiryDate": 1797343028,
+   "applicationLink": "https://himalayas.app/companies/servicetitan/jobs/customer-success-manager",
+   "guid": "https://himalayas.app/companies/servicetitan/jobs/customer-success-manager"
+  }
+ ]
+}
