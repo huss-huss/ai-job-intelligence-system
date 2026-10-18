@@ -60,3 +60,9 @@ def test_cron_runs_with_correct_secret(monkeypatch):
     resp = client.get("/api/cron/discover", headers={"Authorization": "Bearer s3cret"})
     assert resp.status_code == 200 and resp.json() == {"sources": 0, "results": []}
     main.app.dependency_overrides.clear()
+
+
+def test_pooled_neon_host_disables_prepared_statement_caches():
+    url, connect_args = async_database_url("postgresql://u:p@ep-x-pooler.neon.tech/db?sslmode=require")
+    assert connect_args["statement_cache_size"] == 0
+    assert url.query["prepared_statement_cache_size"] == "0"

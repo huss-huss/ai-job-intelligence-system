@@ -48,7 +48,7 @@ def _load_profile() -> CandidateProfile:
     for path in (Path(settings.profile_path), example):
         if path.exists():
             if path == example:
-                logger.warning("%s not found, scoring with profile.example.yaml", settings.profile_path)
+                logger.info("PROFILE_PATH %s not found; using bundled profile.example.yaml", settings.profile_path)
             return load_profile(path)
     return CandidateProfile()
 

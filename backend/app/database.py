@@ -27,7 +27,11 @@ def async_database_url(url: str) -> tuple[URL, dict[str, Any]]:
     query = dict(u.query)
     sslmode = query.pop("sslmode", None)
     query.pop("channel_binding", None)
-    connect_args = {"ssl": "require"} if sslmode and sslmode != "disable" else {}
+    connect_args: dict[str, Any] = {"ssl": "require"} if sslmode and sslmode != "disable" else {}
+    if "-pooler" in (u.host or ""):
+        # PgBouncer in transaction mode can't keep asyncpg's per-connection prepared statements.
+        connect_args["statement_cache_size"] = 0
+        query["prepared_statement_cache_size"] = "0"
     return u.set(query=query), connect_args
 
 
