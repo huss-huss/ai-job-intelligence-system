@@ -46,3 +46,4 @@ MANUAL_SETUP_STEPS.md
 # Personal scoring profile and source list
 profile.yaml
 sources.yaml
+.vercel
