@@ -20,6 +20,7 @@ async def list_jobs(
     q: str | None = Query(None, description="Search in title/company"),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
+    sort: str = Query("score", pattern="^(score|recent)$", description="score: best match first; recent: newest"),
 ) -> Paginated[JobOut]:
     """List jobs with optional filters and pagination."""
     base = select(JobRaw).options(selectinload(JobRaw.analysis))
@@ -43,7 +44,13 @@ async def list_jobs(
         count_stmt = count_stmt.where(JobRaw.id.in_(subq))
 
     total = (await db.execute(count_stmt)).scalar() or 0
-    base = base.order_by(JobRaw.created_at.desc()).offset((page - 1) * page_size).limit(page_size)
+    if sort == "score":
+        base = base.outerjoin(JobAnalysis, JobAnalysis.job_id == JobRaw.id).order_by(
+            JobAnalysis.score.desc().nulls_last(), JobRaw.created_at.desc()
+        )
+    else:
+        base = base.order_by(JobRaw.created_at.desc())
+    base = base.offset((page - 1) * page_size).limit(page_size)
     result = await db.execute(base)
     jobs = result.scalars().all()
 

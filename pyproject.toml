@@ -3,6 +3,24 @@ name = "firstfetch"
 version = "0.2.0"
 description = "Job discovery that scores listings against your profile and syncs the best matches to Notion."
 requires-python = ">=3.11"
+# Runtime set for the serverless deployment (API + inline worker). Local dev and Docker
+# install backend/requirements.txt and worker/requirements.txt.
+dependencies = [
+    "fastapi==0.115.6",
+    "sqlalchemy[asyncio]==2.0.36",
+    "asyncpg==0.30.0",
+    "psycopg2-binary==2.9.10",
+    "pgvector==0.3.6",
+    "alembic==1.14.0",
+    "redis==5.2.1",
+    "rq==2.0.0",
+    "pydantic==2.10.3",
+    "pydantic-settings==2.6.1",
+    "httpx==0.28.1",
+    "pyyaml==6.0.2",
+    "openai==1.55.3",
+    "python-dotenv==1.0.1",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -2,8 +2,11 @@
 
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+import hmac
+
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from app.config import settings
 from app.routes import analyze, cron, health, jobs, runs, scrape, sources
@@ -48,6 +51,19 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
+
+
+@app.middleware("http")
+async def require_admin_for_writes(request: Request, call_next):
+    """With ADMIN_TOKEN set, the deployment is read-only for anyone without the token."""
+    if settings.admin_token and request.method not in SAFE_METHODS:
+        supplied = request.headers.get("x-admin-token", "")
+        if not hmac.compare_digest(supplied, settings.admin_token):
+            return JSONResponse({"detail": "This demo is read-only"}, status_code=403)
+    return await call_next(request)
+
 
 app.include_router(health.router)
 app.include_router(sources.router)

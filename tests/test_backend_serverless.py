@@ -66,3 +66,14 @@ def test_pooled_neon_host_disables_prepared_statement_caches():
     url, connect_args = async_database_url("postgresql://u:p@ep-x-pooler.neon.tech/db?sslmode=require")
     assert connect_args["statement_cache_size"] == 0
     assert url.query["prepared_statement_cache_size"] == "0"
+
+
+def test_admin_token_makes_writes_read_only(monkeypatch):
+    client = _client(monkeypatch, "s3cret")
+    monkeypatch.setattr(settings, "admin_token", "adm")
+    assert client.post("/api/scrape", json={}).status_code == 403
+    assert client.delete("/api/jobs", headers={"X-Admin-Token": "wrong"}).status_code == 403
+    # reads and the cron endpoint (its own secret) still work
+    assert client.get("/api/health").status_code == 200
+    assert client.get("/api/cron/discover", headers={"Authorization": "Bearer s3cret"}).status_code == 200
+    main.app.dependency_overrides.clear()

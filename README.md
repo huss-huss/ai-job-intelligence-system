@@ -2,6 +2,8 @@
 
 [![CI](https://github.com/huss-huss/ai-job-intelligence-system/actions/workflows/ci.yml/badge.svg)](https://github.com/huss-huss/ai-job-intelligence-system/actions/workflows/ci.yml)
 
+**Live demo:** [firstfetch-eight.vercel.app](https://firstfetch-eight.vercel.app) (read-only; refreshed daily by Vercel Cron) · API: [firstfetch-api.vercel.app/api/docs](https://firstfetch-api.vercel.app/api/docs)
+
 FirstFetch pulls listings from public job APIs, scores each one against **your** profile with an explainable 0–100 score, and sends the strong matches to Notion.
 
 I built it because job boards rank by recency, not fit, and most "remote" listings quietly require living in the US. FirstFetch reads the location and work-authorization rules first, so jobs you can't apply for never reach the top of the list.
@@ -197,10 +199,33 @@ curl -X POST http://localhost:8000/api/scrape -H "Content-Type: application/json
 
 ---
 
+## Deploying to Vercel
+
+Two Vercel projects plus a Neon Postgres database (free tiers are enough):
+
+| Project | Root | What runs |
+|---|---|---|
+| API | repo root | `api/index.py` serves the FastAPI app as a Python function; `vercel.json` schedules `GET /api/cron/discover` daily |
+| Dashboard | `frontend/` | static Next.js export; `frontend/vercel.json` proxies `/api/*` to the API project |
+
+```bash
+vercel link --project firstfetch-api            # from the repo root
+vercel integration add neon                     # provisions Postgres and sets DATABASE_URL
+DATABASE_URL=<unpooled url> alembic -c backend/alembic.ini upgrade head
+vercel env add QUEUE_MODE production            # inline: no Redis/RQ worker on serverless
+vercel env add CRON_SECRET production           # Vercel Cron sends it as a Bearer token
+vercel env add ADMIN_TOKEN production           # makes the public deployment read-only
+vercel deploy --prod
+cd frontend && vercel link --project firstfetch && vercel deploy --prod
+```
+
+Writes against a deployment with `ADMIN_TOKEN` need the header `X-Admin-Token: <token>`.
+
 ## Limitations and next steps
 
 - RemoteOK and Himalayas return shortened descriptions, so skill matches on those sources are under-counted. Fetching the full posting page is the next improvement.
 - Salary scoring only understands annual USD. Hourly and other currencies count as unknown.
+- On Vercel each discovery runs inside one function call (up to 300 s) and the Hobby plan allows one cron run per day. Docker Compose with the RQ worker has neither limit.
 - The pgvector `embeddings` table exists but isn't used yet. Semantic similarity against a CV is planned as an extra scoring component.
 - Respect each API's terms: Remotive asks for a few requests per day, and RemoteOK and Arbeitnow ask for links back to listings.
 
@@ -208,5 +233,4 @@ curl -X POST http://localhost:8000/api/scrape -H "Content-Type: application/json
 
 - [docs/ai_job_intelligence_SRS.md](docs/ai_job_intelligence_SRS.md): requirements
 - [docs/ai_job_intelligence_architecture_blueprint.md](docs/ai_job_intelligence_architecture_blueprint.md): architecture and data flow
-- [DEPLOYMENT.md](DEPLOYMENT.md): VPS deploy and Docker
 - [docs/TESTING_AND_VERIFICATION.md](docs/TESTING_AND_VERIFICATION.md): testing
