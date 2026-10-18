@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.models import Source
 from app.schemas import SourceCreate, SourceOut, SourceUpdate
-from app.queue import enqueue_scrape_task
+from app.queue import dispatch_scrape
 
 router = APIRouter(prefix="/api/sources", tags=["sources"])
 
@@ -74,7 +74,7 @@ async def trigger_scrape(source_id: int, db: AsyncSession = Depends(get_db)) -> 
     source = result.scalar_one_or_none()
     if not source:
         raise HTTPException(status_code=404, detail="Source not found")
-    job_id = enqueue_scrape_task(source_id, source.config)
+    job_id = await dispatch_scrape(source_id, source.config)
     if not job_id:
         raise HTTPException(status_code=503, detail="Queue unavailable")
     return {"job_id": job_id, "message": "Scrape task enqueued"}

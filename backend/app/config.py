@@ -1,5 +1,7 @@
 """Application configuration via environment variables."""
 
+from typing import Literal
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -23,6 +25,16 @@ class Settings(BaseSettings):
     # Redis
     redis_url: str = "redis://localhost:6379/0"
 
+    # "redis": hand jobs to the RQ worker. "inline": run them inside the request
+    # (serverless deployments such as Vercel, where there is no long-running worker).
+    queue_mode: Literal["redis", "inline"] = "redis"
+
+    # Vercel Cron sends "Authorization: Bearer <CRON_SECRET>"
+    cron_secret: str = ""
+
+    # Comma-separated extra origins allowed by CORS (dev origins are always allowed)
+    cors_origins: str = ""
+
     # API
     openai_api_key: str = ""
     openai_model: str = "gpt-4o-mini"
@@ -32,7 +44,6 @@ class Settings(BaseSettings):
 
     # Alerts (optional)
     alert_webhook_url: str = ""
-    alert_score_threshold: float = 0.7
 
 
 settings = Settings()

@@ -8,8 +8,12 @@ class Settings(BaseSettings):
 
     database_url: str = "postgresql://postgres:postgres@localhost:5432/jobs"
     redis_url: str = "redis://localhost:6379/0"
+    queue_mode: str = "redis"  # "inline": analyze right after scraping, no RQ worker
 
-    # Candidate profile used for scoring (see profile.example.yaml)
+    # Candidate profile used for scoring. PROFILE_YAML (the file's contents) wins over
+    # PROFILE_PATH, which is handy on hosts without a writable filesystem.
+    profile_yaml: str = ""
+
     profile_path: str = "profile.yaml"
 
     # LLM extraction (optional). Leave the key empty to use rules only.

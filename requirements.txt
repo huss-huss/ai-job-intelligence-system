@@ -1,0 +1,16 @@
+# Runtime dependencies for the Vercel deployment (API + inline worker).
+# Local development installs backend/ and worker/ requirements instead.
+fastapi==0.115.6
+sqlalchemy[asyncio]==2.0.36
+asyncpg==0.30.0
+psycopg2-binary==2.9.10
+pgvector==0.3.6
+alembic==1.14.0
+redis==5.2.1
+rq==2.0.0
+pydantic==2.10.3
+pydantic-settings==2.6.1
+httpx==0.28.1
+pyyaml==6.0.2
+openai==1.55.3
+python-dotenv==1.0.1

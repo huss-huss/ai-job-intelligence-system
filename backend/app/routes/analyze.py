@@ -6,7 +6,7 @@ from sqlalchemy import select
 
 from app.database import get_db
 from app.models import JobRaw
-from app.queue import enqueue_analyze_task
+from app.queue import dispatch_analyze
 from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter(prefix="/api", tags=["analyze"])
@@ -31,7 +31,7 @@ async def analyze(
         job_ids = list(result.scalars().all())
     if not job_ids:
         raise HTTPException(status_code=400, detail="No jobs to analyze")
-    job_id = enqueue_analyze_task(job_ids)
+    job_id = await dispatch_analyze(job_ids)
     if not job_id:
         raise HTTPException(status_code=503, detail="Queue unavailable")
     return {

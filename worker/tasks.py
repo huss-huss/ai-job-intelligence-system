@@ -16,6 +16,7 @@ if _backend.exists() and str(_backend) not in sys.path:
     sys.path.insert(0, str(_backend))
 
 import httpx  # noqa: E402
+import yaml  # noqa: E402
 from app.db_sync import get_sync_session  # noqa: E402
 from app.models import JobAnalysis, JobRaw, Run, Source  # noqa: E402
 from sqlalchemy import select  # noqa: E402
@@ -41,6 +42,8 @@ def _source_config(source: Source, params: dict | None) -> dict:
 
 
 def _load_profile() -> CandidateProfile:
+    if settings.profile_yaml:
+        return CandidateProfile.model_validate(yaml.safe_load(settings.profile_yaml) or {})
     example = Path(__file__).resolve().parent.parent / "profile.example.yaml"
     for path in (Path(settings.profile_path), example):
         if path.exists():
@@ -122,6 +125,9 @@ def run_scrape_task(source_id: int, params: dict | None = None) -> dict:
             raise
         run_id = run.id
 
+    if inserted_ids and settings.queue_mode == "inline":
+        analysis = run_analyze_task(inserted_ids)
+        return {"ok": True, "run_id": run_id, "inserted": len(inserted_ids), "analysis": analysis}
     if inserted_ids:
         from redis import Redis
         from rq import Queue

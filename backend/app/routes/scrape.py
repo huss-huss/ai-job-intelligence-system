@@ -6,7 +6,7 @@ from sqlalchemy import select
 
 from app.database import get_db
 from app.models import Source
-from app.queue import enqueue_scrape_task
+from app.queue import dispatch_scrape
 from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter(prefix="/api", tags=["scrape"])
@@ -26,7 +26,7 @@ async def scrape(request: ScrapeRequest | None = None, db: AsyncSession = Depend
         source = result.scalar_one_or_none()
         if not source:
             raise HTTPException(status_code=404, detail="Source not found or disabled")
-        job_id = enqueue_scrape_task(source.id, source.config)
+        job_id = await dispatch_scrape(source.id, source.config)
         if not job_id:
             raise HTTPException(status_code=503, detail="Queue unavailable")
         return {"job_id": job_id, "source_id": source.id, "message": "Scrape task enqueued"}
@@ -37,7 +37,7 @@ async def scrape(request: ScrapeRequest | None = None, db: AsyncSession = Depend
         raise HTTPException(status_code=400, detail="No enabled sources to scrape")
     job_ids = []
     for s in sources:
-        jid = enqueue_scrape_task(s.id, s.config)
+        jid = await dispatch_scrape(s.id, s.config)
         if jid:
             job_ids.append({"source_id": s.id, "job_id": jid})
     return {"jobs": job_ids, "message": f"Enqueued {len(job_ids)} scrape task(s)"}

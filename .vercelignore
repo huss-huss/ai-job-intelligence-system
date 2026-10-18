@@ -1,0 +1,9 @@
+frontend
+.venv
+docs
+tests
+infra
+scripts
+**/__pycache__
+*.md
+!README.md
