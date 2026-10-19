@@ -8,6 +8,16 @@ jobs:
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    services:
+      # Real Postgres with pgvector, so the full migration chain and the Postgres-only tests run too.
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: scratch
+        ports: ["5433:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
     steps:
       - uses: actions/checkout@v4
 
@@ -28,4 +38,6 @@ jobs:
         run: ruff check worker tests
 
       - name: Test
-        run: pytest
+        run: pytest -rs
+        env:
+          TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5433/scratch
