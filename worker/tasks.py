@@ -41,11 +41,26 @@ META_FIELDS = (
 )  # fmt: skip
 
 
+# jobs_raw text columns are VARCHAR(512).
+COLUMN_LIMIT = 512
+
+
+def _fit(value: str | None) -> str | None:
+    """Shorten text for a VARCHAR(512) column, marking the cut with an ellipsis."""
+    if value is None or len(value) <= COLUMN_LIMIT:
+        return value
+    return value[: COLUMN_LIMIT - 1].rstrip(" ,;") + "…"
+
+
 def _meta(p: JobPosting) -> dict:
     """Source facts without a jobs_raw column. Datetimes are stored as ISO strings (JSONB)."""
     meta = {k: v for k, v in asdict(p).items() if k in META_FIELDS and v not in (None, [], {})}
     if p.updated_at:
         meta["updated_at"] = p.updated_at.isoformat()
+    # Some boards list every eligible country (800+ chars). The column gets a shortened copy, so
+    # keep the full text here: eligibility must see "Ethiopia" even if it falls past the cut.
+    if p.location and len(p.location) > COLUMN_LIMIT:
+        meta["location_full"] = p.location
     return meta
 
 
@@ -105,7 +120,7 @@ def _to_posting(job: JobRaw) -> JobPosting:
         url=job.url,
         title=job.title,
         company=job.company,
-        location=job.location,
+        location=meta.get("location_full") or job.location,
         description=job.description,
         posted_at=job.posted_at,
         updated_at=parse_datetime(meta.get("updated_at")),
@@ -168,9 +183,9 @@ def run_scrape_task(source_id: int, params: dict | None = None) -> dict:
                 raw = JobRaw(
                     source_id=source_id,
                     url=p.url,
-                    title=p.title[:512],
-                    company=p.company,
-                    location=p.location,
+                    title=_fit(p.title),
+                    company=_fit(p.company),
+                    location=_fit(p.location),
                     description=p.description,
                     posted_at=p.posted_at,
                     content_hash=p.content_hash,
