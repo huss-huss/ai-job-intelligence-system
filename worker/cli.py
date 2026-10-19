@@ -3,6 +3,7 @@
     python -m worker.cli discover --profile profile.yaml --sources sources.yaml --top 15
     python -m worker.cli discover --source remotive --search python --json results.json
     python -m worker.cli notion-setup
+    python -m worker.cli repair-text --dry-run   # needs DATABASE_URL
 """
 
 from __future__ import annotations
@@ -10,6 +11,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -119,6 +121,32 @@ def cmd_notion_setup(args) -> int:
     return 0
 
 
+def cmd_repair_text(args) -> int:
+    from sqlalchemy import create_engine, make_url
+    from sqlalchemy.orm import Session
+
+    url = args.database_url or os.environ.get("DATABASE_URL")
+    if not url:
+        print("DATABASE_URL (or --database-url) must be set", file=sys.stderr)
+        return 2
+    if url.startswith("postgres://"):
+        url = "postgresql://" + url[len("postgres://") :]
+    u = make_url(url)
+    if u.drivername.startswith("postgresql"):
+        u = u.set(drivername="postgresql+psycopg2")  # same as the worker's sync engine
+
+    from worker.repair import repair_job_text
+
+    with Session(create_engine(u)) as session:
+        stats = repair_job_text(session, dry_run=args.dry_run, batch_size=args.batch_size)
+    for job_id, column, before, after in stats.samples:
+        print(f"  job {job_id} {column}: {before!r}\n  {'':>{len(str(job_id)) + len(column) + 5}}-> {after!r}")
+    fields = ", ".join(f"{name}={count}" for name, count in stats.fields.items())
+    verb = "would repair" if args.dry_run else "repaired"
+    print(f"{stats.scanned} jobs scanned, {verb} {stats.changed} ({fields})")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="firstfetch", description=__doc__.split("\n")[0])
     parser.add_argument("-v", "--verbose", action="store_true")
@@ -138,6 +166,12 @@ def main(argv: list[str] | None = None) -> int:
 
     n = sub.add_parser("notion-setup", help="add FirstFetch properties to your Notion database")
     n.set_defaults(func=cmd_notion_setup)
+
+    r = sub.add_parser("repair-text", help="fix garbled (mis-decoded) text already stored in jobs_raw")
+    r.add_argument("--dry-run", action="store_true", help="report what would change without writing")
+    r.add_argument("--database-url", help="defaults to $DATABASE_URL")
+    r.add_argument("--batch-size", type=int, default=500)
+    r.set_defaults(func=cmd_repair_text)
 
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO if args.verbose else logging.WARNING, format="%(levelname)s %(message)s")
