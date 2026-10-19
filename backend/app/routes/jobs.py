@@ -1,15 +1,48 @@
 """Jobs list and detail with filtering and pagination."""
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import delete, select, func, or_
+from sqlalchemy import ColumnElement, delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.database import get_db
-from app.models import JobRaw, JobAnalysis
+from app.models import JobAnalysis, JobRaw
 from app.schemas import JobAnalysisOut, JobOut, Paginated
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
+
+ELIGIBILITY_VALUES = ("true", "false", "unknown")
+
+
+def parse_eligible(value: str) -> set[str] | None:
+    """`any` (or every value) means no filter; otherwise a comma-separated subset of true/false/unknown."""
+    wanted = {v.strip().lower() for v in value.split(",") if v.strip()}
+    if not wanted or "any" in wanted:
+        return None
+    bad = wanted - set(ELIGIBILITY_VALUES)
+    if bad:
+        raise HTTPException(
+            status_code=422,
+            detail=f"eligible must be 'any' or a comma-separated subset of {', '.join(ELIGIBILITY_VALUES)}",
+        )
+    return None if wanted == set(ELIGIBILITY_VALUES) else wanted
+
+
+def eligibility_filter(wanted: set[str]) -> ColumnElement[bool]:
+    """Condition on JobRaw.id for jobs whose stored match.eligible is in `wanted`.
+
+    The worker stores match.eligible as JSON true/false/null. Jobs with null, a missing key,
+    or no analysis at all count as "unknown".
+    """
+    flag = JobAnalysis.extracted_json[("match", "eligible")].astext  # 'true' | 'false' | NULL
+    conditions = []
+    for value in ("true", "false"):
+        if value in wanted:
+            conditions.append(JobRaw.id.in_(select(JobAnalysis.job_id).where(flag == value)))
+    if "unknown" in wanted:
+        known = select(JobAnalysis.job_id).where(flag.in_(("true", "false")))
+        conditions.append(JobRaw.id.not_in(known))
+    return or_(*conditions)
 
 
 @router.get("", response_model=Paginated[JobOut])
@@ -21,8 +54,14 @@ async def list_jobs(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     sort: str = Query("score", pattern="^(score|recent)$", description="score: best match first; recent: newest"),
+    eligible: str = Query(
+        "any",
+        description="Location eligibility: 'any' (default), or a comma-separated subset of "
+        "true, false, unknown, e.g. 'true,unknown' hides jobs not open to your location",
+    ),
 ) -> Paginated[JobOut]:
     """List jobs with optional filters and pagination."""
+    wanted = parse_eligible(eligible)
     base = select(JobRaw).options(selectinload(JobRaw.analysis))
     count_stmt = select(func.count()).select_from(JobRaw)
     if source is not None:
@@ -42,6 +81,11 @@ async def list_jobs(
         subq = select(JobAnalysis.job_id).where(JobAnalysis.score >= min_score)
         base = base.where(JobRaw.id.in_(subq))
         count_stmt = count_stmt.where(JobRaw.id.in_(subq))
+
+    if wanted is not None:
+        condition = eligibility_filter(wanted)
+        base = base.where(condition)
+        count_stmt = count_stmt.where(condition)
 
     total = (await db.execute(count_stmt)).scalar() or 0
     if sort == "score":

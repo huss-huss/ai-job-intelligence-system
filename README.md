@@ -48,6 +48,8 @@ Score  Elig  Title                                             Company          
 
 - **Salary normalization** (`worker/salary.py`): hourly × 2080 (40 h × 52 weeks), daily × 260, weekly × 52, monthly × 12; no period means annual and no currency means USD. Other currencies convert with a dated static table (USD per unit), which `FX_RATES_JSON='{"EUR": 1.1}'` overrides or extends. A currency or period the table doesn't know is scored as unknown, never guessed. Period and currency are read from the source's fields or from text such as `$40/hr`, `€5,000 per month`, `£70k`, `USD 120,000 - 150,000`. The reason shows both figures, e.g. `Salary up to €60,000/yr ≈ $70,200`. Stored `salary_min`/`salary_max` stay in the source's own unit.
 
+- **Dashboard** (`frontend/`): each job card shows the top reasons and an eligibility badge (Eligible / Not open to your location / Eligibility unknown). "Why this score" expands the per-component points as bars, the risk penalty, the ineligible cap and the matched skills, all read from the stored `extracted_json.match`. Jobs not open to your location are hidden by default; the "Show N jobs not open to your location" toggle brings them back.
+
 - **Notion** (`worker/notion.py`): upserts keyed by job URL, so re-runs update scores without duplicating pages. The `Status` you set in Notion is never overwritten.
 
 **Stack:** Python 3.12, FastAPI, SQLAlchemy + Alembic, PostgreSQL (pgvector), Redis + RQ, httpx, Pydantic, Next.js dashboard, Docker Compose, GitHub Actions.
@@ -73,7 +75,8 @@ python -m worker.cli discover --sources sources.example.yaml --json results.json
 
 ```bash
 pip install pytest ruff
-pytest          # 144 tests, offline: adapters run against trimmed real API responses
+pytest          # 160 tests, offline: adapters run against trimmed real API responses
+TEST_DATABASE_URL=postgresql://postgres@localhost:5433/scratch pytest   # +1: eligibility filter on a real Postgres (drops and recreates the job tables)
 ruff check worker tests
 ```
 
@@ -175,9 +178,11 @@ docker compose -f infra/docker-compose.yml up -d --build
 | POST | /api/sources | Create source |
 | POST | /api/sources/{id}/scrape | Enqueue scrape for one source |
 | POST | /api/scrape | Enqueue scrape (all or body `source_id`) |
-| GET | /api/jobs | List jobs (filter: source, min_score, q, page) |
+| GET | /api/jobs | List jobs (filter: source, min_score, q, eligible, page; sort: score or recent) |
 | GET | /api/jobs/{id} | Job detail |
 | GET | /api/runs | List scrape/analyze runs |
+
+`eligible` filters on the stored location eligibility: `any` (default), or a comma-separated subset of `true`, `false`, `unknown`. Jobs whose posting doesn't say who can apply, or that aren't analyzed yet, count as `unknown`. The dashboard requests `eligible=true,unknown` and reads the size of the hidden set from `eligible=false&page_size=1`.
 
 ---
 

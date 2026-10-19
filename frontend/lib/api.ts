@@ -23,6 +23,30 @@ export type Job = {
   } | null;
 };
 
+/** Explainable score stored by the worker in analysis.extracted_json.match (see worker/matching.py). */
+export type MatchInfo = {
+  score: number; // 0-100
+  eligible: boolean | null; // null: the posting doesn't say who can apply
+  breakdown: Partial<Record<"role" | "skills" | "seniority" | "location" | "salary" | "recency", number>>;
+  reasons: string[];
+  matched_skills: string[];
+};
+
+export function getMatch(job: Job): MatchInfo | null {
+  const m = job.analysis?.extracted_json?.match as Partial<MatchInfo> | undefined;
+  if (!m || typeof m !== "object") return null;
+  return {
+    score: typeof m.score === "number" ? m.score : Math.round((job.analysis?.score ?? 0) * 100),
+    eligible: typeof m.eligible === "boolean" ? m.eligible : null,
+    breakdown: m.breakdown && typeof m.breakdown === "object" ? m.breakdown : {},
+    reasons: Array.isArray(m.reasons) ? m.reasons : [],
+    matched_skills: Array.isArray(m.matched_skills) ? m.matched_skills : [],
+  };
+}
+
+/** Location eligibility filter for GET /api/jobs: "any" or a comma-separated subset of true,false,unknown. */
+export type EligibleFilter = "any" | "true" | "false" | "unknown" | "true,unknown";
+
 export type Source = {
   id: number;
   name: string;
@@ -63,6 +87,7 @@ export async function fetchJobs(params: {
   q?: string;
   page?: number;
   page_size?: number;
+  eligible?: EligibleFilter;
 }): Promise<JobsResponse> {
   const sp = new URLSearchParams();
   if (params.source != null) sp.set("source", String(params.source));
@@ -70,6 +95,7 @@ export async function fetchJobs(params: {
   if (params.q) sp.set("q", params.q);
   if (params.page != null) sp.set("page", String(params.page));
   if (params.page_size != null) sp.set("page_size", String(params.page_size));
+  if (params.eligible) sp.set("eligible", params.eligible);
   const res = await fetch(`${API_BASE}/api/jobs?${sp}`);
   if (!res.ok) throw new Error("Failed to fetch jobs");
   return res.json();
