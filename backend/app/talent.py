@@ -1,5 +1,6 @@
 """Talent networks: platforms where one application and one vetting process can lead to many
-remote roles. The catalog is static; only your status per platform is stored (talent_networks).
+remote roles. The catalog is static and public; each user's status per platform is stored
+(talent_networks, one row per user and platform) and private.
 
 Descriptions say what each platform is, not how likely you are to get in.
 """
@@ -63,8 +64,11 @@ CATALOG: list[dict[str, str]] = [
 SLUGS = {n["slug"] for n in CATALOG}
 
 
-def list_networks(session: Session) -> list[dict]:
-    rows = {r.slug: r for r in session.execute(select(TalentNetworkStatus)).scalars()}
+def list_networks(session: Session, user_id: int) -> list[dict]:
+    rows = {
+        r.slug: r
+        for r in session.execute(select(TalentNetworkStatus).where(TalentNetworkStatus.user_id == user_id)).scalars()
+    }
     out = []
     for network in CATALOG:
         row = rows.get(network["slug"])
@@ -74,14 +78,14 @@ def list_networks(session: Session) -> list[dict]:
     return out
 
 
-def set_status(session: Session, slug: str, status: str, now: datetime) -> None:
+def set_status(session: Session, user_id: int, slug: str, status: str, now: datetime) -> None:
     if slug not in SLUGS:
         raise KeyError(slug)
     if status not in STATUSES:
         raise ValueError(f"status must be one of {', '.join(STATUSES)}")
-    row = session.get(TalentNetworkStatus, slug)
+    row = session.get(TalentNetworkStatus, (user_id, slug))
     if row is None:
-        session.add(TalentNetworkStatus(slug=slug, status=status, updated_at=now))
+        session.add(TalentNetworkStatus(user_id=user_id, slug=slug, status=status, updated_at=now))
     else:
         row.status, row.updated_at = status, now
     session.flush()

@@ -1,9 +1,19 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { APPLICATION_STATUSES, getAdminToken, setAdminToken, type ApplicationStatus } from "@/lib/api";
+import {
+  APPLICATION_STATUSES,
+  AUTH_EVENT,
+  captureTokenFromUrl,
+  fetchMe,
+  getAdminToken,
+  setAdminToken,
+  setUserToken,
+  type ApplicationStatus,
+  type Me,
+} from "@/lib/api";
 import { cn } from "@/lib/utils";
-import { KeyRound } from "lucide-react";
+import { KeyRound, Lock, LogOut } from "lucide-react";
 
 export const STATUS_META: Record<ApplicationStatus, { label: string; cls: string }> = {
   new: { label: "New", cls: "bg-secondary/80 text-muted-foreground border-border/50" },
@@ -14,6 +24,21 @@ export const STATUS_META: Record<ApplicationStatus, { label: string; cls: string
   rejected: { label: "Rejected", cls: "bg-red-500/15 text-red-300 border-red-500/30" },
   not_interested: { label: "Not for me", cls: "bg-zinc-500/15 text-zinc-400 border-zinc-500/30" },
 };
+
+/** A counter that changes whenever the stored token does, for effects that load private data. */
+export function useAuthKey(): number {
+  const [key, setKey] = useState(0);
+  useEffect(() => {
+    const bump = () => setKey((k) => k + 1);
+    window.addEventListener(AUTH_EVENT, bump);
+    window.addEventListener("storage", bump);
+    return () => {
+      window.removeEventListener(AUTH_EVENT, bump);
+      window.removeEventListener("storage", bump);
+    };
+  }, []);
+  return key;
+}
 
 /** Dashboard filter values; "active" hides jobs you marked not for you. */
 export type StatusFilter = "active" | "all" | ApplicationStatus;
@@ -97,7 +122,7 @@ export function AdminTokenField() {
       <input
         type="password"
         autoComplete="off"
-        placeholder="Admin token (for edits)"
+        placeholder="Admin token (private view)"
         aria-label="Admin token"
         className="w-44 rounded-md border border-border/50 bg-secondary/50 px-2 py-1 text-xs placeholder:text-muted-foreground/60 focus:border-primary focus:outline-none"
         value={value}
@@ -108,5 +133,40 @@ export function AdminTokenField() {
         }}
       />
     </form>
+  );
+}
+
+/**
+ * Header control: "Private view: <name>" with a sign-out button when a valid token is stored,
+ * otherwise the admin-token field. Also picks up a personal link's #token=... on first load.
+ */
+export function ViewerControl() {
+  const [me, setMe] = useState<Me | null>(null);
+  const authKey = useAuthKey();
+  useEffect(() => {
+    captureTokenFromUrl();
+  }, []);
+  useEffect(() => {
+    fetchMe().then(setMe, () => setMe(null));
+  }, [authKey]);
+  if (!me) return <AdminTokenField />;
+  return (
+    <div className="flex items-center gap-2 text-xs">
+      <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 text-emerald-300">
+        <Lock className="h-3 w-3" aria-hidden="true" />
+        Private view: {me.display_name}
+      </span>
+      <button
+        type="button"
+        className="inline-flex items-center gap-1 rounded-md border border-border/50 px-2 py-1 text-muted-foreground hover:text-foreground"
+        onClick={() => {
+          setAdminToken("");
+          setUserToken("");
+        }}
+      >
+        <LogOut className="h-3 w-3" aria-hidden="true" />
+        Public view
+      </button>
+    </div>
   );
 }

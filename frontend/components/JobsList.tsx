@@ -1,12 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { fetchApplications, fetchJobs, getHire, getMatch, getRank, updateApplication, type ApplicationStatus, type Job, type JobSort } from "@/lib/api";
+import { fetchApplications, fetchJobs, hasViewerToken, getHire, getMatch, getRank, updateApplication, type ApplicationStatus, type Job, type JobSort } from "@/lib/api";
 import { formatDate, scoreColor } from "@/lib/utils";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { EligibilityBadge, HireBadge, TopReasons, WhyThisScore } from "@/components/ScoreDetails";
-import { StatusBadge, StatusFilterSelect, StatusSelect, statusParam, type StatusFilter } from "@/components/Tracker";
+import { StatusBadge, StatusFilterSelect, StatusSelect, statusParam, useAuthKey, type StatusFilter } from "@/components/Tracker";
 import { Briefcase, Building2, Eye, EyeOff, MapPin, Loader2 } from "lucide-react";
 
 type Filters = {
@@ -30,41 +30,46 @@ export function JobsList({ filters, onPageChange, refreshKey = 0 }: JobsListProp
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("active");
   const [statuses, setStatuses] = useState<Record<number, ApplicationStatus>>({});
   const [statusError, setStatusError] = useState<string | null>(null);
+  // Tracker statuses are private: without a valid token this is the public view, with none of them.
+  const [privateView, setPrivateView] = useState(false);
+  const authKey = useAuthKey();
 
   useEffect(() => {
     let cancelled = false;
-    const common = {
-      source: filters.source,
-      min_score: filters.min_score,
-      q: filters.q || undefined,
-      status: statusParam(statusFilter),
-    };
     setLoading(true);
     setError(null);
-    Promise.all([
-      fetchJobs({
-        ...common,
-        page: filters.page,
-        page_size: 20,
-        sort: filters.sort ?? "rank",
-        eligible: showIneligible ? "any" : "true,unknown",
-      }),
-      // Only the total is needed for the toggle label.
-      fetchJobs({ ...common, page: 1, page_size: 1, eligible: "false" }).then((r) => r.total, () => null),
-      fetchApplications().catch(() => []),
-    ])
-      .then(([r, hidden, apps]) => {
-        if (cancelled) return;
-        setData({ items: r.items, total: r.total, pages: r.pages });
-        setIneligibleCount(hidden);
-        setStatuses(Object.fromEntries(apps.map((a) => [a.job_id, a.status])));
-      })
+    (async () => {
+      const apps = hasViewerToken() ? await fetchApplications().catch(() => null) : null;
+      const isPrivate = apps !== null;
+      const common = {
+        source: filters.source,
+        min_score: filters.min_score,
+        q: filters.q || undefined,
+        status: isPrivate ? statusParam(statusFilter) : undefined,
+      };
+      const [r, hidden] = await Promise.all([
+        fetchJobs({
+          ...common,
+          page: filters.page,
+          page_size: 20,
+          sort: filters.sort ?? "rank",
+          eligible: showIneligible ? "any" : "true,unknown",
+        }),
+        // Only the total is needed for the toggle label.
+        fetchJobs({ ...common, page: 1, page_size: 1, eligible: "false" }).then((x) => x.total, () => null),
+      ]);
+      if (cancelled) return;
+      setPrivateView(isPrivate);
+      setData({ items: r.items, total: r.total, pages: r.pages });
+      setIneligibleCount(hidden);
+      setStatuses(apps ? Object.fromEntries(apps.map((a) => [a.job_id, a.status])) : {});
+    })()
       .catch((e) => !cancelled && setError(e instanceof Error ? e.message : "Failed to load"))
       .finally(() => !cancelled && setLoading(false));
     return () => {
       cancelled = true;
     };
-  }, [filters.source, filters.min_score, filters.q, filters.sort, filters.page, refreshKey, showIneligible, statusFilter]);
+  }, [filters.source, filters.min_score, filters.q, filters.sort, filters.page, refreshKey, showIneligible, statusFilter, authKey]);
 
   const changeStatus = async (jobId: number, status: ApplicationStatus) => {
     const previous = statuses[jobId] ?? "new";
@@ -77,7 +82,7 @@ export function JobsList({ filters, onPageChange, refreshKey = 0 }: JobsListProp
       setStatusError(e instanceof Error ? e.message : "Update failed");
     }
   };
-  const statusSelect = (
+  const statusSelect = privateView && (
     <StatusFilterSelect
       value={statusFilter}
       onChange={(v) => {
@@ -132,7 +137,7 @@ export function JobsList({ filters, onPageChange, refreshKey = 0 }: JobsListProp
             <p className="text-sm text-muted-foreground/70">
               {ineligibleCount
                 ? "Every match is outside your location."
-                : statusFilter !== "active"
+                : privateView && statusFilter !== "active"
                   ? "No jobs with this tracker status."
                   : "Add a source and trigger a scrape to get started."}
             </p>
@@ -178,14 +183,20 @@ export function JobsList({ filters, onPageChange, refreshKey = 0 }: JobsListProp
       {statusError && <p className="text-sm text-destructive">{statusError}</p>}
       <div className="space-y-3">
         {data.items.map((job) => (
-          <JobCard key={job.id} job={job} status={statuses[job.id] ?? "new"} onStatus={(s) => changeStatus(job.id, s)} />
+          <JobCard
+            key={job.id}
+            job={job}
+            status={privateView ? statuses[job.id] ?? "new" : null}
+            onStatus={(s) => changeStatus(job.id, s)}
+          />
         ))}
       </div>
     </div>
   );
 }
 
-function JobCard({ job, status, onStatus }: { job: Job; status: ApplicationStatus; onStatus: (s: ApplicationStatus) => void }) {
+/** `status` is null in the public view: no tracker controls or badges at all. */
+function JobCard({ job, status, onStatus }: { job: Job; status: ApplicationStatus | null; onStatus: (s: ApplicationStatus) => void }) {
   const score = job.analysis?.score;
   const match = getMatch(job);
   const hire = getHire(job);
@@ -205,7 +216,7 @@ function JobCard({ job, status, onStatus }: { job: Job; status: ApplicationStatu
             </a>
           </CardTitle>
           <div className="flex items-center gap-2">
-            <StatusSelect status={status} onChange={onStatus} />
+            {status && <StatusSelect status={status} onChange={onStatus} />}
             {rank != null && (
               <div className={`score-badge ${scoreColor(rank / 100)}`} title="Rank: fit and hire chance combined">
                 <span className="font-bold">#{rank}</span>
@@ -234,7 +245,7 @@ function JobCard({ job, status, onStatus }: { job: Job; status: ApplicationStatu
         </div>
         <div className="flex flex-wrap items-center gap-2 mt-2">
           {job.analysis && <EligibilityBadge match={match} />}
-          {status !== "new" && <StatusBadge status={status} />}
+          {status && status !== "new" && <StatusBadge status={status} />}
           {hire && <HireBadge hire={hire} />}
           {job.analysis?.seniority && (
             <span className="inline-flex items-center rounded-full bg-primary/10 px-2.5 py-0.5 text-xs font-medium text-primary border border-primary/20">

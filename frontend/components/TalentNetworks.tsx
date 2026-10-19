@@ -5,6 +5,7 @@ import { fetchTalentNetworks, TALENT_STATUSES, updateTalentNetwork, type TalentN
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { ExternalLink, Loader2, Network } from "lucide-react";
+import { useAuthKey } from "@/components/Tracker";
 
 const LABELS: Record<TalentStatus, string> = {
   not_started: "Not started",
@@ -24,11 +25,13 @@ export function TalentNetworks() {
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState<string | null>(null);
 
+  const authKey = useAuthKey();
+
   useEffect(() => {
     fetchTalentNetworks()
       .then(setNetworks)
       .catch((e) => setError(e instanceof Error ? e.message : "Failed to load"));
-  }, []);
+  }, [authKey]);
 
   const change = async (slug: string, status: TalentStatus) => {
     setSaving(slug);
@@ -43,7 +46,9 @@ export function TalentNetworks() {
     }
   };
 
-  const done = networks?.filter((n) => n.status !== "not_started").length ?? 0;
+  // The public API sends the platform list without anyone's progress.
+  const privateView = !!networks?.some((n) => n.status);
+  const done = networks?.filter((n) => n.status && n.status !== "not_started").length ?? 0;
 
   return (
     <Card id="talent-networks" className="border-border/50 shadow-lg shadow-primary/5 animate-fade-in">
@@ -53,7 +58,7 @@ export function TalentNetworks() {
           Talent networks
         </CardTitle>
         <p className="text-xs text-muted-foreground">
-          Apply once, get vetted, then get matched to many remote roles. {networks ? `${done} of ${networks.length} started.` : ""}
+          Apply once, get vetted, then get matched to many remote roles. {networks && privateView ? `${done} of ${networks.length} started.` : ""}
         </p>
       </CardHeader>
       <CardContent>
@@ -77,24 +82,26 @@ export function TalentNetworks() {
                     {n.name}
                     <ExternalLink className="h-3 w-3" aria-hidden="true" />
                   </a>
-                  <div className="flex items-center gap-2">
-                    <span className={cn("rounded-full border px-2 py-0.5 text-[11px] font-medium", BADGE[n.status])}>
-                      {LABELS[n.status]}
-                    </span>
-                    <select
-                      className="rounded-md border border-border/50 bg-secondary/50 px-1.5 py-0.5 text-xs focus:border-primary focus:outline-none"
-                      value={n.status}
-                      disabled={saving === n.slug}
-                      onChange={(e) => change(n.slug, e.target.value as TalentStatus)}
-                      aria-label={`${n.name} status`}
-                    >
-                      {TALENT_STATUSES.map((s) => (
-                        <option key={s} value={s}>
-                          {LABELS[s]}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
+                  {n.status && (
+                    <div className="flex items-center gap-2">
+                      <span className={cn("rounded-full border px-2 py-0.5 text-[11px] font-medium", BADGE[n.status])}>
+                        {LABELS[n.status]}
+                      </span>
+                      <select
+                        className="rounded-md border border-border/50 bg-secondary/50 px-1.5 py-0.5 text-xs focus:border-primary focus:outline-none"
+                        value={n.status}
+                        disabled={saving === n.slug}
+                        onChange={(e) => change(n.slug, e.target.value as TalentStatus)}
+                        aria-label={`${n.name} status`}
+                      >
+                        {TALENT_STATUSES.map((s) => (
+                          <option key={s} value={s}>
+                            {LABELS[s]}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
                 </div>
                 <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{n.summary}</p>
               </li>

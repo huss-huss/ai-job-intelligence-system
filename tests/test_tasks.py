@@ -188,6 +188,7 @@ def test_analyze_task_stores_hire_probability_and_rank(monkeypatch):
         yield session
 
     monkeypatch.setattr(tasks, "get_sync_session", fake_session)
+    monkeypatch.setattr(tasks.user_scoring, "user_profiles", lambda s: [])  # per-user rows: test_user_scoring
     monkeypatch.setattr(settings, "openai_api_key", "")
     monkeypatch.setattr(settings, "llm_base_url", "")
     monkeypatch.setattr(settings, "notion_token", "")

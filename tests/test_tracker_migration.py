@@ -15,12 +15,14 @@ from sqlalchemy import create_engine, inspect, text
 from tests.sqlite_support import alembic_config, sqlite_engine
 
 TRACKER_TABLES = {"applications", "talent_networks", "app_settings"}
+USER_TABLES = {"users", "invites", "auth_throttle", "user_job_scores"}  # 004_multi_user
+OWN_TABLES = TRACKER_TABLES | USER_TABLES
 SCHEMA = "firstfetch_migration_test"
 
 
 def only_tracker_tables(obj, name, type_, reflected, compare_to):
     table = obj if type_ == "table" else getattr(obj, "table", None)
-    return (table.name if table is not None else name) in TRACKER_TABLES
+    return (table.name if table is not None else name) in OWN_TABLES
 
 
 def _check(conn):
@@ -44,7 +46,7 @@ def test_sqlite_upgrade_check_downgrade(tmp_path):
         _check(conn)
     with engine.begin() as conn:
         command.downgrade(alembic_config(conn), "002")
-    assert not TRACKER_TABLES & set(inspect(engine).get_table_names())
+    assert not OWN_TABLES & set(inspect(engine).get_table_names())
     with engine.begin() as conn:
         command.upgrade(alembic_config(conn), "head")
         _check(conn)
@@ -70,7 +72,7 @@ def test_postgres_upgrade_check_downgrade():
             if has_vector:
                 command.upgrade(alembic_config(conn), "head")
             else:
-                older = [t for t in Base.metadata.sorted_tables if t.name not in TRACKER_TABLES | {"embeddings"}]
+                older = [t for t in Base.metadata.sorted_tables if t.name not in OWN_TABLES | {"embeddings"}]
                 Base.metadata.create_all(conn, tables=older)
                 command.stamp(alembic_config(conn), "002")
                 command.upgrade(alembic_config(conn), "head")
@@ -78,10 +80,11 @@ def test_postgres_upgrade_check_downgrade():
             names = set(inspect(conn).get_table_names())
             assert TRACKER_TABLES <= names
             assert ("embeddings" in names) == bool(has_vector)
-            fks = inspect(conn).get_foreign_keys("applications")
-            assert fks[0]["referred_table"] == "jobs_raw" and fks[0]["options"].get("ondelete") == "CASCADE"
+            fks = {fk["referred_table"]: fk for fk in inspect(conn).get_foreign_keys("applications")}
+            assert set(fks) == {"jobs_raw", "users"}
+            assert all(fk["options"].get("ondelete") == "CASCADE" for fk in fks.values())
             command.downgrade(alembic_config(conn), "002")
-            assert not TRACKER_TABLES & set(inspect(conn).get_table_names())
+            assert not OWN_TABLES & set(inspect(conn).get_table_names())
             command.upgrade(alembic_config(conn), "head")
             _check(conn)
     finally:

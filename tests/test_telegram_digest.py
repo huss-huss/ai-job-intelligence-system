@@ -14,11 +14,11 @@ from app.telegram.config import telegram_settings
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-from tests.tracker_fixtures import NOW, add_job, settings, tg_error
+from tests.tracker_fixtures import NOW, add_job, oid, owner, settings, tg_error
 
 
 def send(session, fake_tg, **overrides):
-    return digest.send_digest(session, fake_tg.client(), settings(**overrides), NOW)
+    return digest.send_digest(session, fake_tg.client(), settings(**overrides), NOW, owner(session))
 
 
 def card_titles(fake_tg):
@@ -60,13 +60,13 @@ def test_digest_skips_ineligible_old_acted_on_and_weak_jobs(session, fake_tg):
     add_job(session, "Ineligible", company="I", score=95, eligible=False)
     add_job(session, "Old", company="O", score=95, created_at=NOW - timedelta(days=8))
     saved = add_job(session, "Saved already", company="S", score=95)
-    tracker.set_status(session, saved.id, "saved", now=NOW)
+    tracker.set_status(session, oid(session), saved.id, "saved", now=NOW)
     session.commit()
     add_job(session, "Weak", company="W", score=59)
     send(session, fake_tg)
     assert card_titles(fake_tg) == ["<b>Python Engineer</b>"]
     assert "Eligibility unknown" in fake_tg.sent()[1]["text"]
-    assert tracker.get_application(session, unknown.id).notified_at is not None
+    assert tracker.get_application(session, oid(session), unknown.id).notified_at is not None
 
 
 def test_empty_notice_can_be_turned_off(session, fake_tg):
@@ -76,17 +76,17 @@ def test_empty_notice_can_be_turned_off(session, fake_tg):
 
 def test_paused_digest_sends_nothing(session, fake_tg):
     add_job(session, score=90)
-    bot.set_paused(session, True)
+    bot.set_paused(session, owner(session), True)
     assert send(session, fake_tg)["skipped"] == "paused"
     assert fake_tg.requests == []
 
 
 def test_feedback_pushes_similar_jobs_below_the_threshold(session, fake_tg):
     disliked = add_job(session, "Senior Backend Engineer", company="Acme", score=50)
-    tracker.set_status(session, disliked.id, "not_interested", now=NOW)
-    tracker.mark_notified(session, disliked.id, NOW)
+    tracker.set_status(session, oid(session), disliked.id, "not_interested", now=NOW)
+    tracker.mark_notified(session, oid(session), disliked.id, NOW)
     liked = add_job(session, "ML Engineer", company="Zeta", score=50, skills=["pytorch", "llm"])
-    tracker.set_status(session, liked.id, "saved", now=NOW)
+    tracker.set_status(session, oid(session), liked.id, "saved", now=NOW)
     session.commit()
     add_job(session, "Backend Engineer", company="Acme", score=75)  # 75 - 20 = 55: dropped
     add_job(session, "ML Engineer II", company="Eta", score=58, skills=["pytorch", "llm"])  # 58 + 5 = 63: sent
@@ -114,8 +114,8 @@ def test_one_failed_card_is_counted_and_retried_next_time(session, fake_tg):
     fake_tg.script["sendMessage"] = [httpx.Response(200, json=OK), tg_error(400, "Bad Request: can't parse entities")]
     stats = send(session, fake_tg)
     assert stats["sent"] == 1 and stats["failed"] == 1 and stats["errors"][0]["job_id"] == a.id
-    assert tracker.get_application(session, a.id) is None
-    assert tracker.get_application(session, b.id).notified_at is not None
+    assert tracker.get_application(session, oid(session), a.id) is None
+    assert tracker.get_application(session, oid(session), b.id).notified_at is not None
     fake_tg.requests.clear()
     assert send(session, fake_tg)["sent"] == 1 and card_titles(fake_tg) == ["<b>Backend A</b>"]
 
@@ -162,7 +162,7 @@ def test_run_digest_never_raises_when_telegram_is_down(engine, session, fake_tg)
     run = session.get(Run, result["run_id"])
     session.refresh(run)
     assert run.status == "failed" and "error" in run.stats
-    assert tracker.get_application(session, job.id) is None  # not marked: it goes out next time
+    assert tracker.get_application(session, oid(session), job.id) is None  # not marked: it goes out next time
 
 
 def test_run_digest_survives_a_broken_database():

@@ -230,6 +230,20 @@ def analyze(
     elif not isinstance(extractor, HeuristicExtractor):
         extraction = extractor.extract(posting)
 
+    return score_posting(posting, extraction, profile, now=now)
+
+
+def score_posting(
+    posting: JobPosting,
+    extraction: Extraction,
+    profile: CandidateProfile,
+    *,
+    now: datetime | None = None,
+) -> ScoredJob:
+    """Fit and hire probability of one posting for one profile, from facts already extracted.
+
+    Cheap (rules only, no I/O), so the same extraction can be scored for every user's profile.
+    """
     enriched = enrich(posting, extraction)
     # A level the source states (FreeHire, Jobicy) beats one guessed from the title.
     seniority = _fit_level(enriched.seniority) or extraction.fields.seniority

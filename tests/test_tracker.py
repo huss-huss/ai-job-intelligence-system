@@ -16,7 +16,7 @@ from app.tracker import (
     title_keywords,
 )
 
-from tests.tracker_fixtures import NOW, add_job
+from tests.tracker_fixtures import NOW, add_job, oid
 
 
 def f(job_id, company, *keywords):
@@ -83,17 +83,17 @@ def test_base_points_prefer_rank_then_score():
 
 def test_set_status_records_timestamps(session):
     job = add_job(session)
-    app = tracker.set_status(session, job.id, "saved", now=NOW)
+    app = tracker.set_status(session, oid(session), job.id, "saved", now=NOW)
     assert app.status == "saved" and app.status_changed_at == NOW and app.applied_at is None
     later = NOW + timedelta(hours=1)
-    app = tracker.set_status(session, job.id, "applied", notes="Sent CV", now=later)
+    app = tracker.set_status(session, oid(session), job.id, "applied", notes="Sent CV", now=later)
     assert app.applied_at == later and app.notes == "Sent CV"
-    app = tracker.set_status(session, job.id, "interviewing", now=later + timedelta(days=2))
+    app = tracker.set_status(session, oid(session), job.id, "interviewing", now=later + timedelta(days=2))
     assert app.applied_at == later  # first time only
     with pytest.raises(ValueError):
-        tracker.set_status(session, job.id, "ghosted")
+        tracker.set_status(session, oid(session), job.id, "ghosted")
     with pytest.raises(tracker.UnknownJob):
-        tracker.set_status(session, 99999, "saved")
+        tracker.set_status(session, oid(session), 99999, "saved")
 
 
 def test_candidates_skip_acted_on_ineligible_and_old_jobs(session):
@@ -101,19 +101,19 @@ def test_candidates_skip_acted_on_ineligible_and_old_jobs(session):
     unknown = add_job(session, "Python Developer", company="Beta", score=65, eligible=None)
     add_job(session, "Data Engineer", company="Gamma", score=90, eligible=False)
     acted = add_job(session, "Platform Engineer", company="Delta", score=95)
-    tracker.set_status(session, acted.id, "applied", now=NOW)
+    tracker.set_status(session, oid(session), acted.id, "applied", now=NOW)
     add_job(session, "AI Engineer", company="Old", score=99, created_at=NOW - timedelta(days=40))
     add_job(session, "Unscored", analyzed=False)
-    ids = [c.job.id for c in tracker.candidates(session, since=NOW - timedelta(days=7))]
+    ids = [c.job.id for c in tracker.candidates(session, oid(session), since=NOW - timedelta(days=7))]
     assert ids == [keep.id, unknown.id]
 
 
 def test_feedback_from_the_database_reorders_candidates(session):
     disliked = add_job(session, "Senior Backend Engineer", company="Acme", score=50)
-    tracker.set_status(session, disliked.id, "not_interested", now=NOW)
+    tracker.set_status(session, oid(session), disliked.id, "not_interested", now=NOW)
     similar_job = add_job(session, "Backend Engineer", company="Acme", score=80)
     other = add_job(session, "ML Engineer", company="Zeta", score=72, skills=["pytorch", "llm"])
-    cands = tracker.candidates(session)
+    cands = tracker.candidates(session, oid(session))
     assert [c.job.id for c in cands] == [other.id, similar_job.id]
     penalized = cands[1]
     assert penalized.base == 80 and penalized.points == 60
@@ -124,9 +124,9 @@ def test_pipeline_stats(session):
     a = add_job(session, score=80)
     add_job(session, "Data Engineer", score=40, eligible=None)
     add_job(session, "Ops", score=90, eligible=False)
-    tracker.set_status(session, a.id, "applied", now=NOW)
-    tracker.mark_notified(session, a.id, NOW)
-    stats = tracker.pipeline_stats(session, min_points=60, now=NOW)
+    tracker.set_status(session, oid(session), a.id, "applied", now=NOW)
+    tracker.mark_notified(session, oid(session), a.id, NOW)
+    stats = tracker.pipeline_stats(session, oid(session), min_points=60, now=NOW)
     assert stats["jobs"] == 3 and stats["analyzed"] == 3
     assert stats["eligibility"] == {"eligible": 1, "unknown": 1, "ineligible": 1}
     assert stats["strong"] == 1 and stats["notified"] == 1

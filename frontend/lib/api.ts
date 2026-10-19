@@ -126,7 +126,7 @@ export async function fetchJobs(params: {
   if (params.eligible) sp.set("eligible", params.eligible);
   if (params.status) sp.set("status", params.status);
   if (params.sort) sp.set("sort", params.sort);
-  const res = await fetch(`${API_BASE}/api/jobs?${sp}`);
+  const res = await fetch(`${API_BASE}/api/jobs?${sp}`, { headers: authHeaders() });
   if (!res.ok) throw new Error("Failed to fetch jobs");
   return res.json();
 }
@@ -250,13 +250,16 @@ export type TalentNetwork = {
   name: string;
   url: string;
   summary: string;
-  status: TalentStatus;
-  updated_at: string | null;
+  // Only for an authenticated caller; the public API returns the platform list without progress.
+  status?: TalentStatus;
+  updated_at?: string | null;
 };
 
 const ADMIN_TOKEN_KEY = "firstfetch.adminToken";
+/** Fired on window when the stored token changes, so private panels reload. */
+export const AUTH_EVENT = "firstfetch:auth";
 
-/** On a deployment with ADMIN_TOKEN set, writes need it. It's kept in this browser only. */
+/** The owner's ADMIN_TOKEN, kept in this browser only. Without it the dashboard is the public view. */
 export function getAdminToken(): string {
   if (typeof window === "undefined") return "";
   return window.localStorage.getItem(ADMIN_TOKEN_KEY) ?? "";
@@ -265,27 +268,77 @@ export function getAdminToken(): string {
 export function setAdminToken(token: string): void {
   if (token) window.localStorage.setItem(ADMIN_TOKEN_KEY, token);
   else window.localStorage.removeItem(ADMIN_TOKEN_KEY);
+  window.dispatchEvent(new Event(AUTH_EVENT));
+}
+
+const USER_TOKEN_KEY = "firstfetch.userToken";
+
+/** A personal dashboard token from the bot's /dashboard link. Kept in this browser only. */
+export function getUserToken(): string {
+  if (typeof window === "undefined") return "";
+  return window.localStorage.getItem(USER_TOKEN_KEY) ?? "";
+}
+
+export function setUserToken(token: string): void {
+  if (token) window.localStorage.setItem(USER_TOKEN_KEY, token);
+  else window.localStorage.removeItem(USER_TOKEN_KEY);
+  window.dispatchEvent(new Event(AUTH_EVENT));
+}
+
+/**
+ * The /dashboard link is https://<dashboard>/#token=<token>. A fragment never reaches a server or its
+ * logs; it's moved to localStorage and removed from the address bar right away.
+ */
+export function captureTokenFromUrl(): void {
+  if (typeof window === "undefined") return;
+  const match = window.location.hash.match(/^#token=([A-Za-z0-9_-]{16,128})$/);
+  if (!match) return;
+  setUserToken(match[1]);
+  window.history.replaceState(null, "", window.location.pathname + window.location.search);
+}
+
+/** Headers that identify the viewer; empty for the public. */
+export function authHeaders(): Record<string, string> {
+  const admin = getAdminToken();
+  if (admin) return { "X-Admin-Token": admin };
+  const user = getUserToken();
+  return user ? { "X-User-Token": user } : {};
+}
+
+export type Me = { role: "owner" | "member"; display_name: string };
+
+/** Whose private view this is, or null for the public view. */
+export async function fetchMe(): Promise<Me | null> {
+  if (!hasViewerToken()) return null;
+  const res = await fetch(`${API_BASE}/api/me`, { headers: authHeaders() });
+  if (!res.ok) return null;
+  return res.json();
+}
+
+export function hasViewerToken(): boolean {
+  return Object.keys(authHeaders()).length > 0;
 }
 
 async function writeJson<T>(path: string, body: unknown): Promise<T> {
-  const token = getAdminToken();
   const res = await fetch(`${API_BASE}${path}`, {
     method: "PATCH",
-    headers: { "Content-Type": "application/json", ...(token ? { "X-Admin-Token": token } : {}) },
+    headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify(body),
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    if (res.status === 403) throw new Error("Read-only: enter the admin token to make changes");
+    if (res.status === 401 || res.status === 403) throw new Error("Read-only: enter your token to make changes");
     throw new Error(typeof data?.detail === "string" ? data.detail : `Request failed (${res.status})`);
   }
   return data as T;
 }
 
-export async function fetchApplications(status?: string): Promise<Application[]> {
+/** Your tracked jobs, or null when the caller isn't authenticated (the public view). */
+export async function fetchApplications(status?: string): Promise<Application[] | null> {
   const sp = new URLSearchParams();
   if (status) sp.set("status", status);
-  const res = await fetch(`${API_BASE}/api/applications?${sp}`);
+  const res = await fetch(`${API_BASE}/api/applications?${sp}`, { headers: authHeaders() });
+  if (res.status === 401 || res.status === 403) return null;
   if (!res.ok) throw new Error("Failed to fetch applications");
   return res.json();
 }
@@ -295,7 +348,7 @@ export function updateApplication(jobId: number, body: { status?: ApplicationSta
 }
 
 export async function fetchTalentNetworks(): Promise<TalentNetwork[]> {
-  const res = await fetch(`${API_BASE}/api/talent-networks`);
+  const res = await fetch(`${API_BASE}/api/talent-networks`, { headers: authHeaders() });
   if (!res.ok) throw new Error("Failed to fetch talent networks");
   return res.json();
 }
