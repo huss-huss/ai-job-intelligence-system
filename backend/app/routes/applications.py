@@ -38,7 +38,7 @@ class ApplicationPatch(BaseModel):
     notes: str | None = Field(None, max_length=5000)
 
 
-def _out(app, job, analysis) -> ApplicationOut:
+def _out(app, job, score) -> ApplicationOut:
     return ApplicationOut(
         job_id=app.job_id,
         status=app.status,
@@ -53,7 +53,7 @@ def _out(app, job, analysis) -> ApplicationOut:
             company=job.company,
             location=job.location,
             url=job.url,
-            score=round(tracker.base_points(analysis), 1) if analysis else None,
+            score=round(tracker.user_points(score), 1) if score else None,  # your own score
         ),
     )
 
@@ -74,7 +74,7 @@ def list_applications(
     session: Session = Depends(get_sync_db),
     viewer: Viewer = Depends(require_viewer),
 ) -> list[ApplicationOut]:
-    return [_out(*row) for row in tracker.tracked(session, parse_statuses(status))]
+    return [_out(*row) for row in tracker.tracked(session, viewer.user_id, parse_statuses(status))]
 
 
 @router.patch("/{job_id}", response_model=ApplicationOut)
@@ -87,11 +87,13 @@ def update_application(
     if body.status is None and body.notes is None:
         raise HTTPException(422, "Send status and/or notes")
     try:
-        tracker.set_status(session, job_id, body.status.lower() if body.status else None, notes=body.notes)
+        tracker.set_status(
+            session, viewer.user_id, job_id, body.status.lower() if body.status else None, notes=body.notes
+        )
     except tracker.UnknownJob:
         raise HTTPException(404, "Job not found") from None
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from None
     session.commit()
-    row = next(r for r in tracker.tracked(session) if r[0].job_id == job_id)
+    row = next(r for r in tracker.tracked(session, viewer.user_id) if r[0].job_id == job_id)
     return _out(*row)

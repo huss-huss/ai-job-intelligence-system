@@ -5,7 +5,7 @@ from datetime import timedelta
 from app import tracker
 from app.telegram import bot
 
-from tests.tracker_fixtures import NOW, OWNER, add_job, callback_update, message_update, settings
+from tests.tracker_fixtures import NOW, OWNER, add_job, callback_update, message_update, oid, owner, settings
 
 
 def run(session, fake_tg, update, **overrides):
@@ -30,10 +30,10 @@ def test_setup_mode_replies_to_start_with_the_chat_id_only(session, fake_tg):
 
 def test_other_chats_are_ignored(session, fake_tg):
     job = add_job(session)
-    assert run(session, fake_tg, message_update("/top", chat_id="999")) == "ignored:not-owner"
-    assert run(session, fake_tg, callback_update(f"s:{job.id}:applied", chat_id="999")) == "ignored:not-owner"
+    assert run(session, fake_tg, message_update("/top", chat_id="999")) == "ignored:unknown-chat"
+    assert run(session, fake_tg, callback_update(f"s:{job.id}:applied", chat_id="999")) == "ignored:unknown-chat"
     assert fake_tg.requests == []
-    assert tracker.get_application(session, job.id) is None
+    assert tracker.get_application(session, oid(session), job.id) is None
 
 
 def test_start_and_help(session, fake_tg):
@@ -51,7 +51,7 @@ def test_unknown_command_and_plain_text(session, fake_tg):
 
 def test_top_sends_five_best_unacted_open_matches_with_buttons(session, fake_tg):
     jobs = [add_job(session, f"Backend Engineer {i}", company=f"Co{i}", score=60 + i) for i in range(7)]
-    tracker.set_status(session, jobs[6].id, "saved", now=NOW)  # acted on: skipped
+    tracker.set_status(session, oid(session), jobs[6].id, "saved", now=NOW)  # acted on: skipped
     add_job(session, "Ineligible", company="X", score=99, eligible=False)
     assert run(session, fake_tg, message_update("/top")) == "command:top"
     header, *cards = fake_tg.sent()
@@ -59,7 +59,7 @@ def test_top_sends_five_best_unacted_open_matches_with_buttons(session, fake_tg)
     assert [c["text"].split("\n")[0] for c in cards] == [f"<b>Backend Engineer {i}</b>" for i in (5, 4, 3, 2, 1)]
     assert all(c["reply_markup"]["inline_keyboard"][0][0]["callback_data"].startswith("s:") for c in cards)
     # Shown jobs count as notified, so the digest won't repeat them.
-    assert tracker.get_application(session, jobs[5].id).notified_at is not None
+    assert tracker.get_application(session, oid(session), jobs[5].id).notified_at is not None
 
 
 def test_top_with_nothing_to_show(session, fake_tg):
@@ -91,9 +91,9 @@ def test_applied_lists_tracked_jobs_by_status(session, fake_tg):
     a = add_job(session, "Backend A", company="A")
     b = add_job(session, "Backend B", company="B")
     c = add_job(session, "Backend C", company="C")
-    tracker.set_status(session, a.id, "interviewing", now=NOW)
-    tracker.set_status(session, b.id, "saved", notes="Ask about <timezone>", now=NOW)
-    tracker.set_status(session, c.id, "not_interested", now=NOW)
+    tracker.set_status(session, oid(session), a.id, "interviewing", now=NOW)
+    tracker.set_status(session, oid(session), b.id, "saved", notes="Ask about <timezone>", now=NOW)
+    tracker.set_status(session, oid(session), c.id, "not_interested", now=NOW)
     session.commit()
     run(session, fake_tg, message_update("/applied"))
     (text,) = texts(fake_tg)
@@ -110,7 +110,7 @@ def test_applied_when_empty(session, fake_tg):
 def test_stats(session, fake_tg):
     job = add_job(session, score=80)
     add_job(session, "Ops", score=90, eligible=False)
-    tracker.set_status(session, job.id, "applied", now=NOW)
+    tracker.set_status(session, oid(session), job.id, "applied", now=NOW)
     session.commit()
     run(session, fake_tg, message_update("/stats"))
     (text,) = texts(fake_tg)
@@ -120,18 +120,18 @@ def test_stats(session, fake_tg):
 
 def test_pause_and_resume(session, fake_tg):
     run(session, fake_tg, message_update("/pause"))
-    assert bot.is_paused(session)
+    assert bot.is_paused(owner(session))
     run(session, fake_tg, message_update("/stats"))
     assert "Digest: paused" in texts(fake_tg)[-1]
     run(session, fake_tg, message_update("/resume"))
-    assert not bot.is_paused(session)
+    assert not bot.is_paused(owner(session))
     assert texts(fake_tg)[0].startswith("Daily digest paused") and texts(fake_tg)[-1] == "Daily digest resumed."
 
 
 def test_status_command(session, fake_tg):
     job = add_job(session)
     run(session, fake_tg, message_update(f"/status {job.id} interviewing"))
-    assert tracker.get_application(session, job.id).status == "interviewing"
+    assert tracker.get_application(session, oid(session), job.id).status == "interviewing"
     run(session, fake_tg, message_update("/status 999999 offer"))
     run(session, fake_tg, message_update("/status nope"))
     assert texts(fake_tg)[1:] == ["No job #999999.", texts(fake_tg)[2]]
@@ -141,7 +141,7 @@ def test_status_command(session, fake_tg):
 def test_buttons_update_the_tracker_and_redraw_the_card(session, fake_tg):
     job = add_job(session, "Backend Engineer", company="Acme")
     assert run(session, fake_tg, callback_update(f"s:{job.id}:applied")) == "callback:applied"
-    app = tracker.get_application(session, job.id)
+    app = tracker.get_application(session, oid(session), job.id)
     assert app.status == "applied" and app.applied_at is not None
     (answer,) = fake_tg.sent("answerCallbackQuery")
     assert answer == {"callback_query_id": "cbq-1", "text": "Marked as applied"}
@@ -151,9 +151,9 @@ def test_buttons_update_the_tracker_and_redraw_the_card(session, fake_tg):
     assert edit["reply_markup"]["inline_keyboard"][0][0]["text"] == "✅ Applied ✓"
 
     run(session, fake_tg, callback_update(f"s:{job.id}:not_interested"))
-    assert tracker.get_application(session, job.id).status == "not_interested"
+    assert tracker.get_application(session, oid(session), job.id).status == "not_interested"
     run(session, fake_tg, callback_update(f"s:{job.id}:new"))
-    assert tracker.get_application(session, job.id).status == "new"
+    assert tracker.get_application(session, oid(session), job.id).status == "new"
     assert "Status:" not in fake_tg.sent("editMessageText")[-1]["text"]
 
 

@@ -37,7 +37,7 @@ def list_talent_networks(
 ) -> list[TalentNetworkOut]:
     if viewer is None:
         return [TalentNetworkOut(**{k: n[k] for k in ("slug", "name", "url", "summary")}) for n in talent.CATALOG]
-    return [_out(n) for n in talent.list_networks(session)]
+    return [_out(n) for n in talent.list_networks(session, viewer.user_id)]
 
 
 @router.patch("/{slug}", response_model=TalentNetworkOut)
@@ -48,10 +48,10 @@ def update_talent_network(
     viewer: Viewer = Depends(require_viewer),
 ) -> TalentNetworkOut:
     try:
-        talent.set_status(session, slug, body.status.lower(), tracker.utcnow())
+        talent.set_status(session, viewer.user_id, slug, body.status.lower(), tracker.utcnow())
     except KeyError:
         raise HTTPException(404, "Unknown talent network") from None
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from None
     session.commit()
-    return _out(next(n for n in talent.list_networks(session) if n["slug"] == slug))
+    return _out(next(n for n in talent.list_networks(session, viewer.user_id) if n["slug"] == slug))

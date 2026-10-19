@@ -16,7 +16,7 @@ from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-from tests.tracker_fixtures import NOW, AsyncSessionAdapter, add_job
+from tests.tracker_fixtures import NOW, AsyncSessionAdapter, add_job, add_member, oid
 
 NOTE = "PRIVATE-NOTE-7f3a"
 # JSON values that only exist in private data (job statuses other than "new", talent progress).
@@ -28,12 +28,15 @@ ADMIN = {"X-Admin-Token": "adm"}
 @pytest.fixture
 def seeded(session):
     jobs = [add_job(session, f"Backend Engineer {i}", company=f"Co{i}", score=70 + i) for i in range(4)]
-    tracker.set_status(session, jobs[0].id, "interviewing", notes=NOTE, now=NOW)
-    tracker.set_status(session, jobs[1].id, "not_interested", now=NOW)
-    tracker.set_status(session, jobs[2].id, "offer", now=NOW)
-    tracker.mark_notified(session, jobs[3].id, NOW)
-    talent.set_status(session, "turing", "vetted", NOW)
-    talent.set_status(session, "andela", "active", NOW)
+    tracker.set_status(session, oid(session), jobs[0].id, "interviewing", notes=NOTE, now=NOW)
+    tracker.set_status(session, oid(session), jobs[1].id, "not_interested", now=NOW)
+    tracker.set_status(session, oid(session), jobs[2].id, "offer", now=NOW)
+    tracker.mark_notified(session, oid(session), jobs[3].id, NOW)
+    member = add_member(session, "555001")  # a second user's data must not leak either
+    tracker.set_status(session, member.id, jobs[3].id, "interviewing", notes=NOTE, now=NOW)
+    talent.set_status(session, member.id, "arc", "vetted", NOW)
+    talent.set_status(session, oid(session), "turing", "vetted", NOW)
+    talent.set_status(session, oid(session), "andela", "active", NOW)
     session.add(
         Run(
             type="telegram",
@@ -89,6 +92,7 @@ def _public_gets(job_id: int, source_id: int) -> list[str]:
         "/api/runs": ["/api/runs", "/api/runs?type=telegram"],
         "/api/applications": ["/api/applications", "/api/applications?status=interviewing"],
         "/api/talent-networks": ["/api/talent-networks"],
+        "/api/me": ["/api/me"],
         "/api/cron/discover": [],  # CRON_SECRET; covered in test_telegram_digest
     }
     routes = {r.path for r in main.app.routes if isinstance(r, APIRoute) and "GET" in r.methods}
@@ -109,7 +113,7 @@ def test_no_private_data_on_any_public_endpoint(client, seeded, token):
 
 
 def test_private_endpoints_answer_401_to_the_public(client, seeded):
-    for url in ("/api/applications", "/api/applications?status=interviewing"):
+    for url in ("/api/applications", "/api/applications?status=interviewing", "/api/me"):
         assert client.get(url).status_code == 401
     # The status filter on /api/jobs would reveal which jobs someone acted on.
     for status in ("interviewing", "new", "applied,offer", "not_interested"):
@@ -135,6 +139,10 @@ def test_public_runs_show_only_telegram_totals(client, seeded):
     assert run["stats"] == {"sent": 1, "failed": 1}
     (private,) = [r for r in client.get("/api/runs", headers=ADMIN).json() if r["type"] == "telegram"]
     assert private["stats"]["errors"][0]["job_id"] == seeded[1].id
+
+
+def test_me_names_the_viewer(client, seeded):
+    assert client.get("/api/me", headers=ADMIN).json() == {"role": "owner", "display_name": "Owner"}
 
 
 def test_the_owner_sees_everything_with_the_token(client, seeded):

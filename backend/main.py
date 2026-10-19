@@ -2,14 +2,13 @@
 
 from contextlib import asynccontextmanager
 
-import hmac
-
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from app.auth import admin_token_ok
 from app.config import settings
-from app.routes import analyze, applications, cron, health, jobs, runs, scrape, sources, talent, telegram
+from app.routes import analyze, applications, cron, health, jobs, me, runs, scrape, sources, talent, telegram
 from app.routes.telegram import SECRET_HEADER, WEBHOOK_PATH, webhook_secret_ok
 
 
@@ -54,6 +53,9 @@ app.add_middleware(
 )
 
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
+# Each user's own tracker. These routes authenticate every request themselves (app/auth.py), so a
+# member's personal dashboard token (X-User-Token) can write there; nowhere else.
+USER_WRITE_PREFIXES = ("/api/applications/", "/api/talent-networks/")
 
 
 @app.middleware("http")
@@ -63,8 +65,9 @@ async def require_admin_for_writes(request: Request, call_next):
         # Telegram can't send the admin token; its webhook is authenticated by its own secret instead.
         if request.url.path == WEBHOOK_PATH and webhook_secret_ok(request.headers.get(SECRET_HEADER)):
             return await call_next(request)
-        supplied = request.headers.get("x-admin-token", "")
-        if not hmac.compare_digest(supplied, settings.admin_token):
+        if request.url.path.startswith(USER_WRITE_PREFIXES) and request.headers.get("x-user-token"):
+            return await call_next(request)
+        if not admin_token_ok(request.headers.get("x-admin-token")):
             return JSONResponse({"detail": "This demo is read-only"}, status_code=403)
     return await call_next(request)
 
@@ -79,6 +82,7 @@ app.include_router(cron.router)
 app.include_router(applications.router)
 app.include_router(talent.router)
 app.include_router(telegram.router)
+app.include_router(me.router)
 
 
 if __name__ == "__main__":

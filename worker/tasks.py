@@ -21,6 +21,7 @@ from app.db_sync import get_sync_session  # noqa: E402
 from app.models import JobAnalysis, JobRaw, Run, Source  # noqa: E402
 from sqlalchemy import select  # noqa: E402
 
+from worker import user_scoring  # noqa: E402
 from worker.ai import build_extractor  # noqa: E402
 from worker.config import settings  # noqa: E402
 from worker.notion import NotionSync  # noqa: E402
@@ -237,11 +238,18 @@ def run_analyze_task(job_ids: list[int]) -> dict:
         session.flush()
         stats = {"processed": 0, "llm_calls": 0, "input_tokens": 0, "output_tokens": 0, "notified": 0}
         try:
+            # Each user's own score for every job (worker/user_scoring.py): the facts are extracted
+            # once, then scored per profile, which is rules only.
+            users = user_scoring.user_profiles(session)
+            stats["users_scored"] = len(users)
+            now = datetime.now(UTC)
+            user_rows: list[dict] = []
             for jid in job_ids:
                 job = session.execute(select(JobRaw).where(JobRaw.id == jid)).scalar_one_or_none()
                 if not job:
                     continue
-                scored = analyze(_to_posting(job), profile, extractor)
+                posting = _to_posting(job)
+                scored = analyze(posting, profile, extractor, now=now)
                 f, m = scored.extraction.fields, scored.match
                 values = dict(
                     extracted_json={
@@ -265,6 +273,7 @@ def run_analyze_task(job_ids: list[int]) -> dict:
                         setattr(analysis, key, value)
                 else:
                     session.add(JobAnalysis(job_id=jid, **values))
+                user_rows += user_scoring.scores_for_users(jid, posting, scored.extraction, scored, users, now)
 
                 stats["processed"] += 1
                 if scored.extraction.method == "llm":
@@ -276,6 +285,8 @@ def run_analyze_task(job_ids: list[int]) -> dict:
                     stats["notified"] += 1
                     _notify(scored, notion)
 
+            if user_rows:
+                user_scoring.replace_scores(session, user_rows)
             run.status = "completed"
             run.ended_at = datetime.now(UTC)
             run.stats = stats

@@ -6,6 +6,7 @@ from app.models.job import JobAnalysis, JobRaw
 from app.models.run import Run
 from app.models.source import Source
 from app.models.tracker import AppSetting, Application, TalentNetworkStatus
+from app.models.user import AuthThrottle, Invite, User, UserJobScore
 
 __all__ = [
     "Source",
@@ -17,4 +18,8 @@ __all__ = [
     "Application",
     "TalentNetworkStatus",
     "AppSetting",
+    "User",
+    "Invite",
+    "AuthThrottle",
+    "UserJobScore",
 ]

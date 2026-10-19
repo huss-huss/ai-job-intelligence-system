@@ -47,11 +47,13 @@ def eligibility_filter(wanted: set[str]) -> ColumnElement[bool]:
     return or_(*conditions)
 
 
-def status_filter(wanted: set[str]) -> ColumnElement[bool]:
-    """Condition on JobRaw.id for jobs whose tracker status is in `wanted`; untracked jobs count as "new"."""
-    conditions = [JobRaw.id.in_(select(Application.job_id).where(Application.status.in_(sorted(wanted))))]
+def status_filter(wanted: set[str], user_id: int) -> ColumnElement[bool]:
+    """Condition on JobRaw.id for jobs whose tracker status *for this user* is in `wanted`; untracked jobs
+    count as "new"."""
+    mine = Application.user_id == user_id
+    conditions = [JobRaw.id.in_(select(Application.job_id).where(mine, Application.status.in_(sorted(wanted))))]
     if "new" in wanted:
-        conditions.append(JobRaw.id.not_in(select(Application.job_id)))
+        conditions.append(JobRaw.id.not_in(select(Application.job_id).where(mine)))
     return or_(*conditions)
 
 
@@ -90,7 +92,7 @@ async def list_jobs(
     statuses = parse_statuses(status)
     if statuses is not None and viewer is None:
         # Filtering by status would reveal which jobs someone applied to.
-        raise HTTPException(status_code=401, detail="The status filter is private: send X-Admin-Token")
+        raise HTTPException(status_code=401, detail="The status filter is private: send a token")
     wanted = parse_eligible(eligible)
     base = select(JobRaw).options(selectinload(JobRaw.analysis))
     count_stmt = select(func.count()).select_from(JobRaw)
@@ -118,7 +120,7 @@ async def list_jobs(
         count_stmt = count_stmt.where(condition)
 
     if statuses is not None:
-        condition = status_filter(statuses)
+        condition = status_filter(statuses, viewer.user_id)
         base = base.where(condition)
         count_stmt = count_stmt.where(condition)
 

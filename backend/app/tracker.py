@@ -21,6 +21,9 @@ and /top, each candidate is compared with the jobs you already reacted to:
 
 The stored analysis score is never changed; the adjustment only applies when picking and
 ordering what to send you.
+
+Everything is per user: a candidate's base score is that user's own row in user_job_scores
+(their profile), and the feedback comes from that user's statuses only.
 """
 
 from __future__ import annotations
@@ -34,7 +37,7 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.models import Application, AppSetting, JobAnalysis, JobRaw, Run
+from app.models import Application, AppSetting, JobAnalysis, JobRaw, Run, UserJobScore
 from app.models.tracker import APPLICATION_STATUSES
 
 STATUSES = APPLICATION_STATUSES
@@ -100,8 +103,19 @@ def hire_probability(analysis: JobAnalysis) -> float | None:
     return value / 100 if value > 1 else value
 
 
-def match_info(analysis: JobAnalysis | None) -> dict:
+def match_info(analysis: JobAnalysis | UserJobScore | None) -> dict:
+    if isinstance(analysis, UserJobScore):
+        return analysis.match or {}
     return ((analysis.extracted_json or {}).get("match") or {}) if analysis else {}
+
+
+def user_points(row: UserJobScore) -> float:
+    """0-100 ranking value of a user's own score: rank when present, else fit."""
+    return float(row.rank if row.rank is not None else row.score)
+
+
+def points(score: JobAnalysis | UserJobScore) -> float:
+    return user_points(score) if isinstance(score, UserJobScore) else base_points(score)
 
 
 # --------------------------------------------------------------------------- feedback
@@ -125,10 +139,10 @@ class JobFeatures:
     keywords: frozenset[str]
 
 
-def features(job: JobRaw, analysis: JobAnalysis | None) -> JobFeatures:
+def features(job: JobRaw, analysis: JobAnalysis | UserJobScore | None) -> JobFeatures:
     m = match_info(analysis)
-    skills = (analysis.skills if analysis else None) or m.get("matched_skills") or []
-    if not skills and analysis:
+    skills = (analysis.skills if isinstance(analysis, JobAnalysis) else None) or m.get("matched_skills") or []
+    if not skills and isinstance(analysis, JobAnalysis):
         skills = (analysis.extracted_json or {}).get("skills") or []
     keywords = {str(s).lower() for s in skills} | title_keywords(job.title)
     return JobFeatures(job.id, job.title, company_key(job.company), frozenset(keywords))
@@ -178,12 +192,13 @@ def feedback_adjustment(job: JobFeatures, liked: list[JobFeatures], disliked: li
     return Adjustment(points=min(boost, MAX_BOOST) - min(penalty, MAX_PENALTY), reasons=reasons)
 
 
-def feedback_sets(session: Session) -> tuple[list[JobFeatures], list[JobFeatures]]:
+def feedback_sets(session: Session, user_id: int) -> tuple[list[JobFeatures], list[JobFeatures]]:
+    """One user's likes and dislikes. Another user's feedback never affects your ranking."""
     rows = session.execute(
         select(JobRaw, JobAnalysis, Application.status)
         .join(Application, Application.job_id == JobRaw.id)
         .outerjoin(JobAnalysis, JobAnalysis.job_id == JobRaw.id)
-        .where(Application.status.in_(POSITIVE | NEGATIVE))
+        .where(Application.user_id == user_id, Application.status.in_(POSITIVE | NEGATIVE))
     ).all()
     liked = [features(j, a) for j, a, s in rows if s in POSITIVE]
     disliked = [features(j, a) for j, a, s in rows if s in NEGATIVE]
@@ -196,7 +211,7 @@ def feedback_sets(session: Session) -> tuple[list[JobFeatures], list[JobFeatures
 @dataclass
 class Candidate:
     job: JobRaw
-    analysis: JobAnalysis
+    analysis: JobAnalysis | UserJobScore  # the user's own score row (or a public analysis)
     application: Application | None
     base: float
     adjustment: Adjustment
@@ -210,45 +225,57 @@ class Candidate:
         return self.application.status if self.application else "new"
 
     @property
+    def match(self) -> dict:
+        return match_info(self.analysis)
+
+    @property
     def eligible(self) -> bool | None:
-        value = match_info(self.analysis).get("eligible")
+        value = self.match.get("eligible")
         return value if isinstance(value, bool) else None
 
     @property
     def hire_probability(self) -> float | None:
+        if isinstance(self.analysis, UserJobScore):
+            hp = self.analysis.hire_probability
+            return hp / 100 if hp is not None else None
         return hire_probability(self.analysis)
+
+
+def _app_join(user_id: int):
+    return (Application.job_id == JobRaw.id) & (Application.user_id == user_id)
 
 
 def candidates(
     session: Session,
+    user_id: int,
     *,
     since: datetime | None = None,
     min_points: float | None = None,
     only_unnotified: bool = False,
     include_ineligible: bool = False,
 ) -> list[Candidate]:
-    """Analyzed jobs nobody acted on yet (status new or untracked), best first after feedback.
+    """Jobs this user hasn't acted on (status new or untracked), best first by their own score after
+    their own feedback. Jobs without a score row for the user are skipped (see score_missing).
 
-    Filtering on eligibility happens in Python: it reads the JSON match, and the volume is a
-    few hundred rows at most.
+    Filtering on eligibility happens in Python: the volume is a few hundred rows at most.
     """
     stmt = (
-        select(JobRaw, JobAnalysis, Application)
-        .join(JobAnalysis, JobAnalysis.job_id == JobRaw.id)
-        .outerjoin(Application, Application.job_id == JobRaw.id)
+        select(JobRaw, UserJobScore, Application)
+        .join(UserJobScore, (UserJobScore.job_id == JobRaw.id) & (UserJobScore.user_id == user_id))
+        .outerjoin(Application, _app_join(user_id))
         .where((Application.id.is_(None)) | (Application.status == "new"))
     )
     if since is not None:
         stmt = stmt.where(JobRaw.created_at >= since)
     if only_unnotified:
         stmt = stmt.where((Application.id.is_(None)) | (Application.notified_at.is_(None)))
-    liked, disliked = feedback_sets(session)
+    liked, disliked = feedback_sets(session, user_id)
     out: list[Candidate] = []
-    for job, analysis, app in session.execute(stmt).all():
-        c = Candidate(job, analysis, app, base_points(analysis), Adjustment())
+    for job, score, app in session.execute(stmt).all():
+        c = Candidate(job, score, app, user_points(score), Adjustment())
         if not include_ineligible and c.eligible is False:
             continue
-        c.adjustment = feedback_adjustment(features(job, analysis), liked, disliked)
+        c.adjustment = feedback_adjustment(features(job, score), liked, disliked)
         if min_points is not None and c.points < min_points:
             continue
         out.append(c)
@@ -256,23 +283,21 @@ def candidates(
     return out
 
 
-def candidate_for(session: Session, job_id: int) -> Candidate | None:
-    """One job as a Candidate (any status), e.g. to redraw its Telegram card after a button tap."""
+def candidate_for(session: Session, user_id: int, job_id: int) -> Candidate | None:
+    """One job as this user's Candidate (any status), e.g. to redraw its Telegram card after a tap."""
     row = session.execute(
-        select(JobRaw, JobAnalysis, Application)
-        .outerjoin(JobAnalysis, JobAnalysis.job_id == JobRaw.id)
-        .outerjoin(Application, Application.job_id == JobRaw.id)
+        select(JobRaw, UserJobScore, Application)
+        .outerjoin(UserJobScore, (UserJobScore.job_id == JobRaw.id) & (UserJobScore.user_id == user_id))
+        .outerjoin(Application, _app_join(user_id))
         .where(JobRaw.id == job_id)
     ).first()
     if row is None:
         return None
-    job, analysis, app = row
-    if analysis is None:
-        analysis = JobAnalysis(job_id=job.id, extracted_json={}, score=0)
-    liked, disliked = feedback_sets(session)
-    return Candidate(
-        job, analysis, app, base_points(analysis), feedback_adjustment(features(job, analysis), liked, disliked)
-    )
+    job, score, app = row
+    if score is None:
+        score = UserJobScore(user_id=user_id, job_id=job.id, score=0, match={})
+    liked, disliked = feedback_sets(session, user_id)
+    return Candidate(job, score, app, user_points(score), feedback_adjustment(features(job, score), liked, disliked))
 
 
 # --------------------------------------------------------------------------- status changes
@@ -282,17 +307,19 @@ class UnknownJob(LookupError):
     pass
 
 
-def get_application(session: Session, job_id: int) -> Application | None:
-    return session.execute(select(Application).where(Application.job_id == job_id)).scalar_one_or_none()
+def get_application(session: Session, user_id: int, job_id: int) -> Application | None:
+    return session.execute(
+        select(Application).where(Application.user_id == user_id, Application.job_id == job_id)
+    ).scalar_one_or_none()
 
 
-def ensure_application(session: Session, job_id: int, now: datetime | None = None) -> Application:
-    app = get_application(session, job_id)
+def ensure_application(session: Session, user_id: int, job_id: int, now: datetime | None = None) -> Application:
+    app = get_application(session, user_id, job_id)
     if app is None:
         if session.get(JobRaw, job_id) is None:
             raise UnknownJob(job_id)
         now = now or utcnow()
-        app = Application(job_id=job_id, status="new", created_at=now, updated_at=now)
+        app = Application(user_id=user_id, job_id=job_id, status="new", created_at=now, updated_at=now)
         session.add(app)
         session.flush()
     return app
@@ -300,6 +327,7 @@ def ensure_application(session: Session, job_id: int, now: datetime | None = Non
 
 def set_status(
     session: Session,
+    user_id: int,
     job_id: int,
     status: str | None = None,
     *,
@@ -309,7 +337,7 @@ def set_status(
     if status is not None and status not in STATUSES:
         raise ValueError(f"status must be one of {', '.join(STATUSES)}")
     now = now or utcnow()
-    app = ensure_application(session, job_id, now)
+    app = ensure_application(session, user_id, job_id, now)
     if status is not None and status != app.status:
         app.status = status
         app.status_changed_at = now
@@ -322,20 +350,24 @@ def set_status(
     return app
 
 
-def mark_notified(session: Session, job_id: int, now: datetime | None = None) -> Application:
+def mark_notified(session: Session, user_id: int, job_id: int, now: datetime | None = None) -> Application:
     now = now or utcnow()
-    app = ensure_application(session, job_id, now)
+    app = ensure_application(session, user_id, job_id, now)
     if app.notified_at is None:
         app.notified_at = now
     session.flush()
     return app
 
 
-def tracked(session: Session, statuses: set[str] | None = None) -> list[tuple[Application, JobRaw, JobAnalysis | None]]:
+def tracked(
+    session: Session, user_id: int, statuses: set[str] | None = None
+) -> list[tuple[Application, JobRaw, UserJobScore | None]]:
+    """One user's tracked jobs with their own score, newest change first."""
     stmt = (
-        select(Application, JobRaw, JobAnalysis)
+        select(Application, JobRaw, UserJobScore)
         .join(JobRaw, JobRaw.id == Application.job_id)
-        .outerjoin(JobAnalysis, JobAnalysis.job_id == JobRaw.id)
+        .outerjoin(UserJobScore, (UserJobScore.job_id == JobRaw.id) & (UserJobScore.user_id == user_id))
+        .where(Application.user_id == user_id)
         .order_by(Application.updated_at.desc(), Application.id.desc())
     )
     if statuses:
@@ -361,7 +393,8 @@ def put_setting(session: Session, key: str, value: Any, now: datetime | None = N
     session.flush()
 
 
-def pipeline_stats(session: Session, *, min_points: float, now: datetime | None = None) -> dict:
+def pipeline_stats(session: Session, user_id: int, *, min_points: float, now: datetime | None = None) -> dict:
+    """Job counts are global; eligibility, strong matches and the tracker are this user's."""
     now = now or utcnow()
     jobs = session.execute(select(func.count()).select_from(JobRaw)).scalar() or 0
     new_24h = (
@@ -372,17 +405,20 @@ def pipeline_stats(session: Session, *, min_points: float, now: datetime | None 
     )
     eligibility: Counter[str] = Counter()
     strong = 0
-    for analysis in session.execute(select(JobAnalysis)).scalars():
-        flag = match_info(analysis).get("eligible")
+    for row in session.execute(select(UserJobScore).where(UserJobScore.user_id == user_id)).scalars():
+        flag = row.eligible
         eligibility[{True: "eligible", False: "ineligible"}.get(flag, "unknown")] += 1
-        if flag is not False and base_points(analysis) >= min_points:
+        if flag is not False and user_points(row) >= min_points:
             strong += 1
+    mine = Application.user_id == user_id
     statuses = dict(
-        session.execute(select(Application.status, func.count()).group_by(Application.status)).tuples().all()
+        session.execute(select(Application.status, func.count()).where(mine).group_by(Application.status))
+        .tuples()
+        .all()
     )
     notified = (
         session.execute(
-            select(func.count()).select_from(Application).where(Application.notified_at.is_not(None))
+            select(func.count()).select_from(Application).where(mine, Application.notified_at.is_not(None))
         ).scalar()
         or 0
     )

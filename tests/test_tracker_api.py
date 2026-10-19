@@ -14,7 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.orm import Session
 
-from tests.tracker_fixtures import OWNER, SECRET, add_job, message_update, settings
+from tests.tracker_fixtures import OWNER, SECRET, add_job, message_update, oid, settings
 
 HOOK = "/api/telegram/webhook"
 ADMIN = {"X-Admin-Token": "adm"}
@@ -40,7 +40,7 @@ def client(engine, fake_tg, monkeypatch):
 
 
 @pytest.fixture
-def owner(client):
+def admin(client):
     """The same app, every request carrying the admin token."""
     client.headers.update(ADMIN)
     return client
@@ -49,8 +49,8 @@ def owner(client):
 # ----------------------------------------------------------------- applications
 
 
-def test_applications_crud(owner, session):
-    client = owner
+def test_applications_crud(admin, session):
+    client = admin
     job = add_job(session, "Backend Engineer", company="Acme", score=81)
     assert client.get("/api/applications").json() == []
     resp = client.patch(f"/api/applications/{job.id}", json={"status": "applied", "notes": "Referred by a friend"})
@@ -72,8 +72,8 @@ def test_applications_crud(owner, session):
     assert notes_only["status"] == "applied" and notes_only["notes"] == "Call on Monday"
 
 
-def test_application_validation(owner, session):
-    client = owner
+def test_application_validation(admin, session):
+    client = admin
     job = add_job(session)
     assert client.patch(f"/api/applications/{job.id}", json={"status": "hired"}).status_code == 422
     assert client.patch(f"/api/applications/{job.id}", json={}).status_code == 422
@@ -105,8 +105,8 @@ def test_without_an_admin_token_configured_private_data_is_closed(client, sessio
 # ----------------------------------------------------------------- talent networks
 
 
-def test_talent_networks_list_and_update(owner):
-    client = owner
+def test_talent_networks_list_and_update(admin):
+    client = admin
     networks = client.get("/api/talent-networks").json()
     assert [n["name"] for n in networks] == ["Andela", "Turing", "Toptal", "micro1", "Mercor", "Arc.dev"]
     assert all(n["status"] == "not_started" and n["url"].startswith("https://") and n["summary"] for n in networks)
@@ -172,7 +172,7 @@ def test_webhook_button_tap_updates_tracker(client, session, fake_tg):
     resp = client.post(HOOK, json=update, headers={"X-Telegram-Bot-Api-Secret-Token": SECRET})
     assert resp.json()["result"] == "callback:saved"
     session.expire_all()
-    assert tracker.get_application(session, job.id).status == "saved"
+    assert tracker.get_application(session, oid(session), job.id).status == "saved"
 
 
 def test_webhook_errors_are_swallowed_so_telegram_does_not_redeliver(client, fake_tg):
@@ -196,10 +196,10 @@ def _sql(stmt) -> str:
 def test_jobs_status_filter_sql():
     from app.models import JobRaw
 
-    sql = _sql(select(JobRaw.id).where(status_filter({"saved", "new"})))
-    assert "applications.status IN ('new', 'saved')" in sql
-    assert "jobs_raw.id NOT IN (SELECT applications.job_id" in sql
-    assert "NOT IN" not in _sql(select(JobRaw.id).where(status_filter({"applied"})))
+    sql = _sql(select(JobRaw.id).where(status_filter({"saved", "new"}, 7)))
+    assert "applications.user_id = 7 AND applications.status IN ('new', 'saved')" in sql
+    assert "jobs_raw.id NOT IN (SELECT applications.job_id" in sql and sql.count("applications.user_id = 7") == 2
+    assert "NOT IN" not in _sql(select(JobRaw.id).where(status_filter({"applied"}, 7)))
 
 
 class _Result:
@@ -222,13 +222,19 @@ class _Recording:
         return _Result()
 
 
-def test_jobs_endpoint_applies_status_filter():
+def test_jobs_endpoint_applies_status_filter(engine):
     rec = _Recording()
 
     async def fake_db():
         yield rec
 
+    def sync_db():
+        with Session(engine) as s:
+            yield s
+            s.commit()
+
     main.app.dependency_overrides[get_db] = fake_db
+    main.app.dependency_overrides[get_sync_db] = sync_db
     try:
         c = TestClient(main.app)
         assert c.get("/api/jobs", params={"status": "new,saved,applied"}).status_code == 401
@@ -237,7 +243,7 @@ def test_jobs_endpoint_applies_status_filter():
             mp.setattr(app_settings, "admin_token", "adm")
             resp = c.get("/api/jobs", params={"status": "new,saved,applied"}, headers=ADMIN)
         assert resp.status_code == 200 and rec.statements
-        assert all("applications.status IN" in _sql(s) for s in rec.statements)
+        assert all("applications.user_id = 1 AND applications.status IN" in _sql(s) for s in rec.statements)
         assert c.get("/api/jobs", params={"status": "bogus"}).status_code == 422
     finally:
         main.app.dependency_overrides.clear()

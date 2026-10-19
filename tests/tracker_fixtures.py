@@ -12,7 +12,7 @@ from pathlib import Path
 import httpx
 import pytest
 from alembic import command
-from app.models import JobAnalysis, JobRaw, Source
+from app.models import JobAnalysis, JobRaw, Source, User, UserJobScore
 from sqlalchemy.orm import Session
 
 from tests.sqlite_support import alembic_config, sqlite_engine
@@ -68,6 +68,36 @@ def settings(**overrides):
 _counter = {"n": 0}
 
 
+def owner(s: Session) -> User:
+    """The owner row (the migration creates it; its chat id follows TELEGRAM_CHAT_ID)."""
+    from app import users
+
+    user = users.ensure_owner(s, OWNER)
+    s.commit()
+    return user
+
+
+def oid(s: Session) -> int:
+    return owner(s).id
+
+
+def add_member(s: Session, chat_id: str = "555001", name: str = "Friend", profile: dict | None = None) -> User:
+    from app import users
+
+    user = User(telegram_chat_id=chat_id, display_name=name, role="member", created_at=NOW)
+    s.add(user)
+    s.flush()
+    user.profile = profile if profile is not None else users.profile_model(owner(s)).model_dump(mode="json")
+    s.commit()
+    return user
+
+
+def _pct(value) -> int | None:
+    if value is None:
+        return None
+    return round(value * 100) if value <= 1 else round(value)
+
+
 def add_job(
     s: Session,
     title: str = "Senior Backend Engineer",
@@ -82,7 +112,11 @@ def add_job(
     location: str | None = "Remote (Worldwide)",
     extra: dict | None = None,
     analyzed: bool = True,
+    user_scores: dict[int, dict] | None = None,
+    description: str = "",
 ) -> JobRaw:
+    """A stored, analyzed job. Every existing user gets the same score row (as if their profiles agreed)
+    unless `user_scores` gives {user_id: {"score": .., "eligible": ..}} for some of them."""
     source = s.query(Source).first()
     if source is None:
         source = Source(name="Fixture", base_url="https://example.com")
@@ -96,7 +130,7 @@ def add_job(
         title=title,
         company=company,
         location=location,
-        description="",
+        description=description,
         content_hash=f"hash-{n}",
         created_at=created_at or NOW - timedelta(hours=2),
     )
@@ -119,6 +153,21 @@ def add_job(
                 skills=skills if skills is not None else ["python", "fastapi"],
             )
         )
+        owner(s)
+        for user in s.query(User).all():
+            own = {**match, **((user_scores or {}).get(user.id) or {})}
+            s.add(
+                UserJobScore(
+                    user_id=user.id,
+                    job_id=job.id,
+                    score=round(own["score"]),
+                    eligible=own["eligible"],
+                    rank=_pct((extra or {}).get("rank")),
+                    hire_probability=_pct((extra or {}).get("hire_probability")),
+                    match=own,
+                    scored_at=NOW,
+                )
+            )
         s.flush()
     s.commit()
     return job

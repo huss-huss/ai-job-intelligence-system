@@ -60,6 +60,7 @@ def webhook(
         session.commit()
     except Exception as exc:
         session.rollback()
-        logger.warning("Telegram update %s failed: %s", update.get("update_id"), exc)
+        # Only the exception type: database errors carry their parameters (chat ids, names, codes).
+        logger.warning("Telegram update %s failed: %s", update.get("update_id"), type(exc).__name__)
         result = "error"
     return {"ok": True, "result": result}
