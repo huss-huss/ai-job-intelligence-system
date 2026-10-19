@@ -1,11 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { fetchJobs, getMatch, type Job } from "@/lib/api";
+import { fetchApplications, fetchJobs, getMatch, updateApplication, type ApplicationStatus, type Job } from "@/lib/api";
 import { formatDate, scoreColor } from "@/lib/utils";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { EligibilityBadge, TopReasons, WhyThisScore } from "@/components/ScoreDetails";
+import { StatusBadge, StatusFilterSelect, StatusSelect, statusParam, type StatusFilter } from "@/components/Tracker";
 import { Briefcase, Building2, Eye, EyeOff, MapPin, Loader2 } from "lucide-react";
 
 type Filters = {
@@ -24,28 +25,60 @@ export function JobsList({ filters, onPageChange, refreshKey = 0 }: JobsListProp
   // Jobs that are known not to be open to the profile's location are hidden unless asked for.
   const [showIneligible, setShowIneligible] = useState(false);
   const [ineligibleCount, setIneligibleCount] = useState<number | null>(null);
+  // Tracker: jobs marked "not for me" are hidden unless the filter asks for them.
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("active");
+  const [statuses, setStatuses] = useState<Record<number, ApplicationStatus>>({});
+  const [statusError, setStatusError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    const common = { source: filters.source, min_score: filters.min_score, q: filters.q || undefined };
+    const common = {
+      source: filters.source,
+      min_score: filters.min_score,
+      q: filters.q || undefined,
+      status: statusParam(statusFilter),
+    };
     setLoading(true);
     setError(null);
     Promise.all([
       fetchJobs({ ...common, page: filters.page, page_size: 20, eligible: showIneligible ? "any" : "true,unknown" }),
       // Only the total is needed for the toggle label.
       fetchJobs({ ...common, page: 1, page_size: 1, eligible: "false" }).then((r) => r.total, () => null),
+      fetchApplications().catch(() => []),
     ])
-      .then(([r, hidden]) => {
+      .then(([r, hidden, apps]) => {
         if (cancelled) return;
         setData({ items: r.items, total: r.total, pages: r.pages });
         setIneligibleCount(hidden);
+        setStatuses(Object.fromEntries(apps.map((a) => [a.job_id, a.status])));
       })
       .catch((e) => !cancelled && setError(e instanceof Error ? e.message : "Failed to load"))
       .finally(() => !cancelled && setLoading(false));
     return () => {
       cancelled = true;
     };
-  }, [filters.source, filters.min_score, filters.q, filters.page, refreshKey, showIneligible]);
+  }, [filters.source, filters.min_score, filters.q, filters.page, refreshKey, showIneligible, statusFilter]);
+
+  const changeStatus = async (jobId: number, status: ApplicationStatus) => {
+    const previous = statuses[jobId] ?? "new";
+    setStatuses((m) => ({ ...m, [jobId]: status }));
+    setStatusError(null);
+    try {
+      await updateApplication(jobId, { status });
+    } catch (e) {
+      setStatuses((m) => ({ ...m, [jobId]: previous }));
+      setStatusError(e instanceof Error ? e.message : "Update failed");
+    }
+  };
+  const statusSelect = (
+    <StatusFilterSelect
+      value={statusFilter}
+      onChange={(v) => {
+        setStatusFilter(v);
+        onPageChange?.(1);
+      }}
+    />
+  );
 
   const toggleIneligible = () => {
     setShowIneligible((v) => !v);
@@ -90,8 +123,13 @@ export function JobsList({ filters, onPageChange, refreshKey = 0 }: JobsListProp
             <Briefcase className="h-12 w-12 text-muted-foreground/40" />
             <p className="text-muted-foreground font-medium">No jobs found</p>
             <p className="text-sm text-muted-foreground/70">
-              {ineligibleCount ? "Every match is outside your location." : "Add a source and trigger a scrape to get started."}
+              {ineligibleCount
+                ? "Every match is outside your location."
+                : statusFilter !== "active"
+                  ? "No jobs with this tracker status."
+                  : "Add a source and trigger a scrape to get started."}
             </p>
+            {statusSelect}
             {ineligibleToggle}
           </div>
         </CardContent>
@@ -106,6 +144,7 @@ export function JobsList({ filters, onPageChange, refreshKey = 0 }: JobsListProp
           <p className="text-sm font-medium text-muted-foreground">
             <span className="text-foreground font-semibold">{data.total}</span> job{data.total !== 1 ? "s" : ""} <span className="text-muted-foreground/60">(page {filters.page} of {data.pages})</span>
           </p>
+          {statusSelect}
           {ineligibleToggle}
         </div>
         {onPageChange && data.pages > 1 && (
@@ -129,16 +168,17 @@ export function JobsList({ filters, onPageChange, refreshKey = 0 }: JobsListProp
           </div>
         )}
       </div>
+      {statusError && <p className="text-sm text-destructive">{statusError}</p>}
       <div className="space-y-3">
         {data.items.map((job) => (
-          <JobCard key={job.id} job={job} />
+          <JobCard key={job.id} job={job} status={statuses[job.id] ?? "new"} onStatus={(s) => changeStatus(job.id, s)} />
         ))}
       </div>
     </div>
   );
 }
 
-function JobCard({ job }: { job: Job }) {
+function JobCard({ job, status, onStatus }: { job: Job; status: ApplicationStatus; onStatus: (s: ApplicationStatus) => void }) {
   const score = job.analysis?.score;
   const match = getMatch(job);
   return (
@@ -155,11 +195,14 @@ function JobCard({ job }: { job: Job }) {
               {job.title}
             </a>
           </CardTitle>
-          {score != null && (
-            <div className={`score-badge ${scoreColor(score)}`} title="AI opportunity score">
-              <span className="font-bold">{(score * 100).toFixed(0)}%</span>
-            </div>
-          )}
+          <div className="flex items-center gap-2">
+            <StatusSelect status={status} onChange={onStatus} />
+            {score != null && (
+              <div className={`score-badge ${scoreColor(score)}`} title="AI opportunity score">
+                <span className="font-bold">{(score * 100).toFixed(0)}%</span>
+              </div>
+            )}
+          </div>
         </div>
         <div className="flex flex-wrap gap-4 text-sm text-muted-foreground mt-2">
           {job.company && (
@@ -177,6 +220,7 @@ function JobCard({ job }: { job: Job }) {
         </div>
         <div className="flex flex-wrap items-center gap-2 mt-2">
           {job.analysis && <EligibilityBadge match={match} />}
+          {status !== "new" && <StatusBadge status={status} />}
           {job.analysis?.seniority && (
             <span className="inline-flex items-center rounded-full bg-primary/10 px-2.5 py-0.5 text-xs font-medium text-primary border border-primary/20">
               {job.analysis.seniority}

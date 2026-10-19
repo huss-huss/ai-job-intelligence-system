@@ -4,6 +4,8 @@ import { useState, useEffect } from "react";
 import { fetchSources, triggerScrape, triggerAnalyze, fetchRuns, createTestJobs, clearJobs, type Source } from "@/lib/api";
 import { JobsList } from "@/components/JobsList";
 import { RunsList } from "@/components/RunsList";
+import { TalentNetworks } from "@/components/TalentNetworks";
+import { AdminTokenField } from "@/components/Tracker";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Play, Search, Briefcase, Loader2, Trash2, RefreshCw } from "lucide-react";
@@ -274,6 +276,7 @@ export default function DashboardPage() {
               <p className="text-xs text-muted-foreground">Smart Job Discovery Platform</p>
             </div>
           </div>
+          <AdminTokenField />
         </div>
       </header>
 
@@ -558,6 +561,8 @@ export default function DashboardPage() {
               )}
             </CardContent>
           </Card>
+
+          <TalentNetworks />
 
           <RunsList key={runsRefresh} />
         </div>

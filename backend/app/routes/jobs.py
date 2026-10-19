@@ -6,7 +6,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.database import get_db
-from app.models import JobAnalysis, JobRaw
+from app.models import Application, JobAnalysis, JobRaw
+from app.routes.applications import parse_statuses
 from app.schemas import JobAnalysisOut, JobOut, Paginated
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
@@ -45,6 +46,14 @@ def eligibility_filter(wanted: set[str]) -> ColumnElement[bool]:
     return or_(*conditions)
 
 
+def status_filter(wanted: set[str]) -> ColumnElement[bool]:
+    """Condition on JobRaw.id for jobs whose tracker status is in `wanted`; untracked jobs count as "new"."""
+    conditions = [JobRaw.id.in_(select(Application.job_id).where(Application.status.in_(sorted(wanted))))]
+    if "new" in wanted:
+        conditions.append(JobRaw.id.not_in(select(Application.job_id)))
+    return or_(*conditions)
+
+
 @router.get("", response_model=Paginated[JobOut])
 async def list_jobs(
     db: AsyncSession = Depends(get_db),
@@ -58,6 +67,11 @@ async def list_jobs(
         "any",
         description="Location eligibility: 'any' (default), or a comma-separated subset of "
         "true, false, unknown, e.g. 'true,unknown' hides jobs not open to your location",
+    ),
+    status: str | None = Query(
+        None,
+        description="Tracker status: comma-separated subset of new, saved, applied, interviewing, offer, "
+        "rejected, not_interested ('new' includes untracked jobs)",
     ),
 ) -> Paginated[JobOut]:
     """List jobs with optional filters and pagination."""
@@ -84,6 +98,12 @@ async def list_jobs(
 
     if wanted is not None:
         condition = eligibility_filter(wanted)
+        base = base.where(condition)
+        count_stmt = count_stmt.where(condition)
+
+    statuses = parse_statuses(status)
+    if statuses is not None:
+        condition = status_filter(statuses)
         base = base.where(condition)
         count_stmt = count_stmt.where(condition)
 

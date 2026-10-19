@@ -4,6 +4,8 @@
     python -m worker.cli discover --source remotive --search python --json results.json
     python -m worker.cli notion-setup
     python -m worker.cli repair-text --dry-run   # needs DATABASE_URL
+    python -m worker.cli telegram-setup --url https://<api-host>   # needs TELEGRAM_* env vars
+    python -m worker.cli telegram-test
 """
 
 from __future__ import annotations
@@ -156,6 +158,28 @@ def cmd_repair_text(args) -> int:
     return 0
 
 
+def _telegram():
+    """The bot lives in the backend package (app.telegram) so the API image doesn't need worker/."""
+    backend = str(Path(__file__).resolve().parent.parent / "backend")
+    if backend not in sys.path:
+        sys.path.insert(0, backend)
+    from app.telegram import cli
+
+    return cli
+
+
+def cmd_telegram_setup(args) -> int:
+    return _telegram().setup(args.url, drop_pending_updates=not args.keep_pending)
+
+
+def cmd_telegram_test(args) -> int:
+    return _telegram().send_test()
+
+
+def cmd_telegram_digest(args) -> int:
+    return _telegram().digest(dry_run=args.dry_run)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="firstfetch", description=__doc__.split("\n")[0])
     parser.add_argument("-v", "--verbose", action="store_true")
@@ -186,6 +210,18 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--database-url", help="defaults to $DATABASE_URL")
     r.add_argument("--batch-size", type=int, default=500)
     r.set_defaults(func=cmd_repair_text)
+
+    t = sub.add_parser("telegram-setup", help="point the Telegram bot's webhook at your API (setWebhook)")
+    t.add_argument("--url", help="public API base URL, e.g. https://<project>.vercel.app (default: $TELEGRAM_API_URL)")
+    t.add_argument("--keep-pending", action="store_true", help="don't drop updates Telegram queued while offline")
+    t.set_defaults(func=cmd_telegram_setup)
+
+    tt = sub.add_parser("telegram-test", help="send a test message to TELEGRAM_CHAT_ID")
+    tt.set_defaults(func=cmd_telegram_test)
+
+    td = sub.add_parser("telegram-digest", help="send today's Telegram digest now (needs DATABASE_URL)")
+    td.add_argument("--dry-run", action="store_true", help="print what would be sent; nothing is sent or marked")
+    td.set_defaults(func=cmd_telegram_digest)
 
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO if args.verbose else logging.WARNING, format="%(levelname)s %(message)s")
