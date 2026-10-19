@@ -257,6 +257,7 @@ def test_hire_probability_combines_gates_and_weighted_factors():
         "eligibility",
         "timezone",
         "language",
+        "risk",
         "competition",
         "freshness",
         "seniority",

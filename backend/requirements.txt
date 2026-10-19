@@ -28,3 +28,6 @@ structlog==24.4.0
 
 # Security & utilities
 python-dotenv==1.0.1
+
+# Resume PDFs for cover letters (text extraction only)
+pypdf==6.21.1

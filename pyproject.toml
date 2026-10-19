@@ -20,6 +20,7 @@ dependencies = [
     "pyyaml==6.0.2",
     "openai==1.55.3",
     "python-dotenv==1.0.1",
+    "pypdf==6.21.1",
 ]
 
 [tool.pytest.ini_options]

@@ -6,7 +6,7 @@ poor use of an application. It is a relative index for ranking, not a calibrated
 
 Model (every number below is a named constant, mirrored in frontend/components/ScoreDetails.tsx):
 
-    hire_probability = 100 × eligibility × timezone × language × soft
+    hire_probability = 100 × eligibility × timezone × language × risk × soft
     soft             = Σ SOFT_WEIGHTS[f] × factor[f] / Σ SOFT_WEIGHTS     (competition, freshness,
                                                                          seniority, employment)
 
@@ -30,7 +30,7 @@ from worker.sources.normalize import SENIORITY_LEVELS, normalize_employment_type
 from worker.timezone import find_timezone_windows
 
 SOFT_WEIGHTS: dict[str, int] = {"competition": 30, "freshness": 30, "seniority": 20, "employment": 20}
-GATES = ("eligibility", "timezone", "language")
+GATES = ("eligibility", "timezone", "language", "risk")
 
 # Eligibility certainty
 REGION_CERTAINTY: dict[str, float] = {
@@ -44,6 +44,14 @@ UNKNOWN_ELIGIBILITY = 0.5  # bare "Remote"
 _REGION_LABELS = {"worldwide": "applicants worldwide", "anywhere": "applicants worldwide",
                   "global": "applicants worldwide", "africa": "Africa", "emea": "EMEA", "mena": "MENA"}
 RESTRICTED = 0.02  # not open to your location: effectively zero
+AI_ELIGIBLE = 0.9  # the LLM read an explicit "open to <your region>" / "worldwide" the rules couldn't see
+
+# Risk flags (rules or LLM): the lowest value among the posting's flags. vague_description only costs fit.
+RISK_GATE: dict[str, float] = {
+    "not_a_job": 0.1, "requires_upfront_payment": 0.1, "unpaid": 0.3, "commission_only": 0.5,
+}  # fmt: skip
+_RISK_LABELS = {"not_a_job": "doesn't look like a real job", "requires_upfront_payment": "asks you to pay",
+                "unpaid": "unpaid", "commission_only": "commission only"}  # fmt: skip
 
 # Timezone: hours between your offset and the nearest accepted offset -> factor
 TIMEZONE_CURVE: list[tuple[float, float]] = [(0, 1.0), (2, 0.75), (4, 0.45), (6, 0.25)]
@@ -145,11 +153,21 @@ def _ago(hours: float) -> str:
 
 
 def eligibility_factor(
-    posting: JobPosting, profile: CandidateProfile, eligible: bool | None, location_reason: str
+    posting: JobPosting,
+    profile: CandidateProfile,
+    eligible: bool | None,
+    location_reason: str,
+    *,
+    ai_read: bool = False,
 ) -> tuple[float, str]:
-    """How sure we are that you may apply from your country (see REGION_CERTAINTY)."""
+    """How sure we are that you may apply from your country (see REGION_CERTAINTY).
+
+    `ai_read`: the verdict and reason come from the LLM's reading of the posting (pipeline.ai_eligibility).
+    """
     if eligible is False:
         return RESTRICTED, f"Not open to your location ({location_reason})"
+    if ai_read and eligible:
+        return AI_ELIGIBLE, location_reason
     loc = (posting.location or "").lower()
     prefs = profile.location
     if _contains(loc, prefs.country.lower()) or prefs.country_code.lower() in posting.countries:
@@ -227,6 +245,14 @@ def language_factor(posting: JobPosting, profile: CandidateProfile) -> tuple[flo
     if code and code != "en" and name not in spoken:
         return NON_ENGLISH_POSTING, f"Posting is in {name.title() if name else code}"
     return 1.0, None
+
+
+def risk_factor(risk_flags: list[str] | None) -> tuple[float, str | None]:
+    flags = [f for f in (risk_flags or []) if f in RISK_GATE]
+    if not flags:
+        return 1.0, None
+    worst = min(flags, key=lambda f: RISK_GATE[f])
+    return RISK_GATE[worst], f"Risk: {_RISK_LABELS[worst]}"
 
 
 # --- soft factors -------------------------------------------------------------------------------
@@ -311,14 +337,18 @@ def estimate_hire_probability(
     eligible: bool | None,
     location_reason: str,
     seniority: str | None = None,
+    risk_flags: list[str] | None = None,
+    ai_eligibility: bool = False,
     now: datetime | None = None,
 ) -> HireResult:
-    """`eligible`/`location_reason` come from matching.location_eligibility, so both scores agree."""
+    """`eligible`/`location_reason` come from matching.location_eligibility (or the LLM's reading of the
+    posting, `ai_eligibility`), so both scores agree."""
     now = now or datetime.now(UTC)
     results: dict[str, tuple[float, str | None]] = {
-        "eligibility": eligibility_factor(posting, profile, eligible, location_reason),
+        "eligibility": eligibility_factor(posting, profile, eligible, location_reason, ai_read=ai_eligibility),
         "timezone": timezone_factor(posting, profile),
         "language": language_factor(posting, profile),
+        "risk": risk_factor(risk_flags),
         "competition": competition_factor(posting, profile),
         "freshness": freshness_factor(posting, now),
         "seniority": seniority_factor(posting, profile, seniority),

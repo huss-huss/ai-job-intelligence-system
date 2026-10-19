@@ -5,9 +5,11 @@ RQ job definitions. Run with: PYTHONPATH=backend rq worker
 
 import logging
 import sys
+import time
 import traceback
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 # Ensure backend app is on path when worker runs from repo root
@@ -22,10 +24,11 @@ from app.models import JobAnalysis, JobRaw, Run, Source  # noqa: E402
 from sqlalchemy import select  # noqa: E402
 
 from worker import user_scoring  # noqa: E402
-from worker.ai import build_extractor  # noqa: E402
+from worker.ai import Extraction, HeuristicExtractor, LLMExtractor, build_caller  # noqa: E402
+from worker.budget import SqlUsageStore  # noqa: E402
 from worker.config import settings  # noqa: E402
 from worker.notion import NotionSync  # noqa: E402
-from worker.pipeline import ScoredJob, analyze  # noqa: E402
+from worker.pipeline import ScoredJob, analyze, count_llm, score_posting  # noqa: E402
 from worker.profile import CandidateProfile, load_profile  # noqa: E402
 from worker.sources import HttpClient, JobPosting, fetch_postings  # noqa: E402
 from worker.sources.base import parse_datetime  # noqa: E402
@@ -222,10 +225,46 @@ def run_scrape_task(source_id: int, params: dict | None = None) -> dict:
     return {"ok": True, "run_id": run_id, "inserted": len(inserted_ids)}
 
 
+def _analysis_values(scored: ScoredJob) -> dict:
+    f, m = scored.extraction.fields, scored.match
+    extracted = {
+        **f.model_dump(),
+        "match": m.to_dict(),
+        "hire": scored.hire.to_dict(),
+        # 0-100 each; the tracker and Telegram digest read these two keys
+        "hire_probability": scored.hire.score,
+        "rank": scored.rank,  # geometric mean of match.score and hire_probability
+        "method": scored.extraction.method,
+    }
+    if scored.extraction.model:
+        extracted["llm_model"] = scored.extraction.model
+    return dict(
+        extracted_json=extracted,
+        score=m.score / 100,  # stored 0-1; the dashboard renders it as a percentage
+        seniority=f.seniority,
+        salary_min=scored.posting.salary_min,
+        salary_max=scored.posting.salary_max,
+        skills=m.matched_skills or f.skills or None,
+    )
+
+
+def _store_analysis(session, job_id: int, scored: ScoredJob) -> None:
+    values = _analysis_values(scored)
+    analysis = session.execute(select(JobAnalysis).where(JobAnalysis.job_id == job_id)).scalar_one_or_none()
+    if analysis:
+        for key, value in values.items():
+            setattr(analysis, key, value)
+    else:
+        session.add(JobAnalysis(job_id=job_id, **values))
+
+
 def run_analyze_task(job_ids: list[int]) -> dict:
-    """Extract facts, score against the profile, store analysis, notify on strong matches."""
+    """Extract facts by rules, score against the profile, store analysis, notify on strong matches.
+
+    LLM extraction is a separate step, `run_llm_enrich_task`, run once a day on the day's best jobs.
+    """
     profile = _load_profile()
-    extractor = build_extractor(settings.openai_api_key, settings.openai_model, settings.llm_base_url)
+    extractor = HeuristicExtractor()
     notion = (
         NotionSync(settings.notion_token, settings.notion_database_id)
         if settings.notion_token and settings.notion_database_id
@@ -236,7 +275,7 @@ def run_analyze_task(job_ids: list[int]) -> dict:
         run = Run(type="analyze", source_id=None, status="running")
         session.add(run)
         session.flush()
-        stats = {"processed": 0, "llm_calls": 0, "input_tokens": 0, "output_tokens": 0, "notified": 0}
+        stats = {"processed": 0, "notified": 0}
         try:
             # Each user's own score for every job (worker/user_scoring.py): the facts are extracted
             # once, then scored per profile, which is rules only.
@@ -249,44 +288,136 @@ def run_analyze_task(job_ids: list[int]) -> dict:
                 if not job:
                     continue
                 posting = _to_posting(job)
-                scored = analyze(posting, profile, extractor, now=now)
-                f, m = scored.extraction.fields, scored.match
-                values = dict(
-                    extracted_json={
-                        **f.model_dump(),
-                        "match": m.to_dict(),
-                        "hire": scored.hire.to_dict(),
-                        # 0-100 each; the tracker and Telegram digest read these two keys
-                        "hire_probability": scored.hire.score,
-                        "rank": scored.rank,  # geometric mean of match.score and hire_probability
-                        "method": scored.extraction.method,
-                    },
-                    score=m.score / 100,  # stored 0-1; the dashboard renders it as a percentage
-                    seniority=f.seniority,
-                    salary_min=scored.posting.salary_min,
-                    salary_max=scored.posting.salary_max,
-                    skills=m.matched_skills or f.skills or None,
-                )
-                analysis = session.execute(select(JobAnalysis).where(JobAnalysis.job_id == jid)).scalar_one_or_none()
-                if analysis:
-                    for key, value in values.items():
-                        setattr(analysis, key, value)
+                previous = session.execute(select(JobAnalysis).where(JobAnalysis.job_id == jid)).scalar_one_or_none()
+                if previous is not None and (previous.extracted_json or {}).get("method") == "llm":
+                    # Rescoring (POST /api/analyze) keeps the facts the LLM already read: no new call.
+                    extraction = user_scoring.stored_extraction(previous, posting)
+                    extraction.model = previous.extracted_json.get("llm_model")
+                    scored = score_posting(posting, extraction, profile, now=now)
                 else:
-                    session.add(JobAnalysis(job_id=jid, **values))
+                    scored = analyze(posting, profile, extractor, now=now)
+                _store_analysis(session, jid, scored)
                 user_rows += user_scoring.scores_for_users(jid, posting, scored.extraction, scored, users, now)
 
                 stats["processed"] += 1
-                if scored.extraction.method == "llm":
-                    stats["llm_calls"] += 1
-                    stats["input_tokens"] += scored.extraction.input_tokens
-                    stats["output_tokens"] += scored.extraction.output_tokens
-
+                m = scored.match
                 if m.score >= profile.notify_threshold and m.eligible is not False:
                     stats["notified"] += 1
                     _notify(scored, notion)
 
             if user_rows:
                 user_scoring.replace_scores(session, user_rows)
+            run.status = "completed"
+            run.ended_at = datetime.now(UTC)
+            run.stats = stats
+            session.commit()
+        except Exception as exc:
+            _fail(session, run, exc, **stats)
+            raise
+        run_id = run.id
+    return {"ok": True, "run_id": run_id, **stats}
+
+
+ENRICH_WINDOW = timedelta(hours=36)  # the day's jobs, with slack for a late or missed run
+NO_RETRY = ("error", "invalid_output")  # a job whose LLM call failed this way isn't tried again
+
+
+def _session_factory():
+    from app.db_sync import SyncSessionLocal
+
+    return SyncSessionLocal
+
+
+def llm_candidates(session, now: datetime, window: timedelta = ENRICH_WINDOW) -> list[tuple[int, int, int]]:
+    """(rank, fit, job id) of recent jobs that only have rules extraction, best first."""
+    rows = session.execute(
+        select(JobAnalysis.job_id, JobAnalysis.extracted_json)
+        .join(JobRaw, JobRaw.id == JobAnalysis.job_id)
+        .where(JobRaw.created_at >= now - window)
+    ).all()
+    out = []
+    for job_id, data in rows:
+        data = data or {}
+        if data.get("method") == "llm" or data.get("llm_fallback") in NO_RETRY:
+            continue
+        fit = int((data.get("match") or {}).get("score") or 0)
+        if fit <= 0:
+            continue
+        out.append((int(data.get("rank") or 0), fit, job_id))
+    out.sort(reverse=True)
+    return out
+
+
+def run_llm_enrich_task(*, now: datetime | None = None, client=None, session_factory=None) -> dict:
+    """LLM extraction for the day's top-N jobs by rules rank (N = what's left of today's extraction cap).
+
+    Jobs are rescored with the LLM's facts for the public profile and every user. Calls run in
+    parallel (LLM_CONCURRENCY); no new call starts after LLM_ENRICH_MAX_SECONDS. Every call is
+    checked against the budget first (worker/budget.py). Never raises for LLM trouble: a failed call
+    keeps the rules analysis and is counted under `llm_fallbacks`.
+    """
+    now = now or datetime.now(UTC)
+    session_factory = session_factory or _session_factory()
+    caller = build_caller(settings, store=SqlUsageStore(session_factory), client=client)
+    if caller is None:
+        return {"ok": True, "skipped": "AI is off (no OPENAI_API_KEY or LLM_BASE_URL)"}
+    extractor = LLMExtractor(caller)
+    profile = _load_profile()
+
+    with session_factory() as session:
+        run = Run(type="llm_enrich", source_id=None, status="running", started_at=now)
+        session.add(run)
+        session.commit()
+        stats: dict = {"candidates": 0, "selected": 0, "enriched": 0, "llm_calls": 0, "llm_fallbacks": {}}
+        try:
+            remaining = caller.guard.remaining_extractions()
+            candidates = llm_candidates(session, now)
+            stats["candidates"] = len(candidates)
+            picked = [job_id for _, _, job_id in candidates[:remaining]]
+            stats["selected"] = len(picked)
+            jobs = {j.id: j for j in session.execute(select(JobRaw).where(JobRaw.id.in_(picked))).scalars()}
+            postings = {jid: _to_posting(jobs[jid]) for jid in picked if jid in jobs}
+            session.commit()  # no transaction stays open during the calls
+
+            started = time.monotonic()
+
+            def extract(job_id: int) -> tuple[int, Extraction | None]:
+                if time.monotonic() - started > settings.llm_enrich_max_seconds:
+                    return job_id, None
+                return job_id, extractor.extract(postings[job_id])
+
+            with ThreadPoolExecutor(max_workers=max(1, settings.llm_concurrency)) as pool:
+                results = list(pool.map(extract, list(postings)))
+
+            users = user_scoring.user_profiles(session)
+            user_rows: list[dict] = []
+            for job_id, extraction in results:
+                if extraction is None:
+                    stats["llm_fallbacks"]["time_budget"] = stats["llm_fallbacks"].get("time_budget", 0) + 1
+                    continue
+                count_llm(stats, extraction)
+                if extraction.method != "llm":
+                    reason = extraction.fallback_reason
+                    analysis = session.execute(
+                        select(JobAnalysis).where(JobAnalysis.job_id == job_id)
+                    ).scalar_one_or_none()
+                    if analysis is not None and reason in NO_RETRY:
+                        analysis.extracted_json = {**(analysis.extracted_json or {}), "llm_fallback": reason}
+                    continue
+                posting = postings[job_id]
+                scored = score_posting(posting, extraction, profile, now=now)
+                _store_analysis(session, job_id, scored)
+                user_rows += user_scoring.scores_for_users(job_id, posting, extraction, scored, users, now)
+                stats["enriched"] += 1
+            if user_rows:
+                user_scoring.replace_scores(session, user_rows)
+            fallbacks = sum(stats["llm_fallbacks"].values())
+            if fallbacks:
+                logger.warning("LLM enrichment: %s of %s jobs kept the rules extraction", fallbacks, len(picked))
+            summary = caller.guard.summary()
+            stats["month_to_date_usd"] = round(summary.month_cost, 6)
+            stats["budget_usd"] = caller.guard.monthly_budget_usd
+            stats["model"] = caller.model
             run.status = "completed"
             run.ended_at = datetime.now(UTC)
             run.stats = stats

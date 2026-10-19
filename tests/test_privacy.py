@@ -16,11 +16,12 @@ from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-from tests.tracker_fixtures import NOW, AsyncSessionAdapter, add_job, add_member, oid
+from tests.tracker_fixtures import NOW, AsyncSessionAdapter, add_job, add_member, oid, owner
 
 NOTE = "PRIVATE-NOTE-7f3a"
+RESUME = "PRIVATE-RESUME-91c2"
 # JSON values that only exist in private data (job statuses other than "new", talent progress).
-PRIVATE_WORDS = ('"interviewing"', '"not_interested"', '"vetted"', '"active"', '"offer"', NOTE)
+PRIVATE_WORDS = ('"interviewing"', '"not_interested"', '"vetted"', '"active"', '"offer"', NOTE, RESUME)
 PRIVATE_KEYS = {"notes", "applied_at", "notified_at", "status_changed_at", "application", "applications"}
 ADMIN = {"X-Admin-Token": "adm"}
 
@@ -37,6 +38,8 @@ def seeded(session):
     talent.set_status(session, member.id, "arc", "vetted", NOW)
     talent.set_status(session, oid(session), "turing", "vetted", NOW)
     talent.set_status(session, oid(session), "andela", "active", NOW)
+    member.resume_text = f"{RESUME} member resume"  # cover-letter resumes (/cv) are private too
+    owner(session).resume_text = f"{RESUME} owner resume"
     session.add(
         Run(
             type="telegram",

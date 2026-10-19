@@ -181,8 +181,15 @@ class FakeTelegram:
     script: dict[str, list[httpx.Response]] = field(default_factory=dict)
     fail_all: bool = False
     next_message_id: int = 1000
+    files: dict[str, bytes] = field(default_factory=dict)  # file_id -> content, for getFile + download
 
     def handler(self, request: httpx.Request) -> httpx.Response:
+        if request.url.path.startswith(f"/file/bot{TOKEN}/"):
+            file_id = request.url.path.rsplit("/", 1)[-1]
+            self.requests.append(("downloadFile", {"file_id": file_id}))
+            if file_id not in self.files:
+                return httpx.Response(404)
+            return httpx.Response(200, content=self.files[file_id])
         method = request.url.path.rsplit("/", 1)[-1]
         assert request.url.path.startswith(f"/bot{TOKEN}/")
         body = json.loads(request.content or b"{}")
@@ -195,6 +202,11 @@ class FakeTelegram:
         if method == "sendMessage":
             self.next_message_id += 1
             return httpx.Response(200, json={"ok": True, "result": {"message_id": self.next_message_id}})
+        if method == "getFile":
+            file_id = body["file_id"]
+            size = len(self.files.get(file_id, b""))
+            result = {"file_id": file_id, "file_size": size, "file_path": f"documents/{file_id}"}
+            return httpx.Response(200, json={"ok": True, "result": result})
         if method == "getMe":
             return httpx.Response(200, json={"ok": True, "result": {"id": 1, "username": "FirstFetchTestBot"}})
         return httpx.Response(200, json={"ok": True, "result": True})
@@ -235,6 +247,16 @@ def message_update(text: str, chat_id: str = OWNER, update_id: int = 1) -> dict:
     return {
         "update_id": update_id,
         "message": {"message_id": 10, "chat": {"id": int(chat_id), "type": "private"}, "text": text},
+    }
+
+
+def document_update(file_id: str, file_name: str, size: int, chat_id: str = OWNER, mime: str | None = None) -> dict:
+    document = {"file_id": file_id, "file_unique_id": f"u-{file_id}", "file_name": file_name, "file_size": size}
+    if mime:
+        document["mime_type"] = mime
+    return {
+        "update_id": 3,
+        "message": {"message_id": 11, "chat": {"id": int(chat_id), "type": "private"}, "document": document},
     }
 
 

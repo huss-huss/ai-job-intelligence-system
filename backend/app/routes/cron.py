@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.database import get_db
 from app.models import Source
-from app.queue import dispatch_scrape
+from app.queue import dispatch_llm_enrich, dispatch_scrape
 from app.telegram.config import telegram_settings
 
 router = APIRouter(prefix="/api/cron", tags=["cron"])
@@ -31,6 +31,9 @@ async def discover(authorization: str = Header(""), db: AsyncSession = Depends(g
         except Exception as exc:  # one failing source shouldn't stop the others
             results.append({"source_id": source.id, "error": str(exc)[:300]})
     response: dict = {"sources": len(sources), "results": results}
+    if settings.ai_enabled:
+        # The day's top jobs by rules rank get LLM extraction, within the budget (worker/budget.py).
+        response["llm_enrich"] = await dispatch_llm_enrich()
     if telegram_settings.can_send:
         # Daily Telegram digest rides on this run (Vercel Hobby allows one cron a day). It never raises.
         from starlette.concurrency import run_in_threadpool

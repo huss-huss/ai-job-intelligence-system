@@ -16,11 +16,26 @@ class Settings(BaseSettings):
 
     profile_path: str = "profile.yaml"
 
-    # LLM extraction (optional). Leave the key empty to use rules only.
-    # For a local model: LLM_BASE_URL=http://localhost:11434/v1 OPENAI_MODEL=llama3.1
+    # AI features (optional): extraction of job facts and cover letters. Leave the key empty for rules only.
+    # For a local model: LLM_BASE_URL=http://localhost:11434/v1 OPENAI_MODEL=llama3.1 (not billed).
     openai_api_key: str = ""
-    openai_model: str = "gpt-4o-mini"
+    openai_model: str = "gpt-6-luna"
     llm_base_url: str = ""
+    # Used when OPENAI_MODEL isn't available on the key (404/403). Empty: no fallback.
+    llm_fallback_model: str = "gpt-4.1-mini"
+    # Hard local budget (worker/budget.py), below the $1 limit on the OpenAI account.
+    llm_monthly_budget_usd: float = 0.80
+    llm_max_extractions_per_day: int = 30  # the day's top-N jobs by rules rank get LLM extraction
+    llm_max_cover_letters_per_day: int = 5  # per user
+    # "" = the model's default from worker/llm.py MODEL_CAPS ("low" for gpt-6-luna)
+    llm_reasoning_effort: str = ""
+    # Extra or corrected prices: '{"model": [input USD per 1M, output USD per 1M]}'
+    llm_prices_json: str = ""
+    llm_timeout_seconds: float = 30.0
+    llm_concurrency: int = 4  # parallel extraction calls in the daily run
+    llm_enrich_max_seconds: float = 75.0  # stop starting new extraction calls after this long
+    # Ledger for `discover` without a database
+    llm_usage_file: str = ".firstfetch/llm_usage.json"
 
     # Notion sync (optional)
     notion_token: str = ""

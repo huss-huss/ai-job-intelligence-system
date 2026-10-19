@@ -1,8 +1,20 @@
 import json
-from types import SimpleNamespace
 
+import httpx
+import pytest
+
+from tests.llm_fakes import FakeOpenAI, ai_settings
+from worker import llm
 from worker.ai import ExtractedFields, HeuristicExtractor, LLMExtractor, _strict_schema, build_extractor
+from worker.budget import BudgetGuard, MemoryUsageStore
+from worker.llm import LLMCaller, LLMConfig
+from worker.pipeline import DiscoveryReport, count_llm
 from worker.sources.base import JobPosting
+
+
+@pytest.fixture(autouse=True)
+def _fresh_learning():
+    llm.forget_learned()
 
 LONG_DESC = (
     "We are hiring a senior engineer to build FastAPI services backed by PostgreSQL and Redis. "
@@ -14,25 +26,6 @@ LONG_DESC = (
 def posting(**kw) -> JobPosting:
     base = dict(source="t", external_id="1", url="https://x/1", title="Senior Backend Engineer", description=LONG_DESC)
     return JobPosting(**{**base, **kw})
-
-
-class FakeCompletions:
-    def __init__(self, content=None, error=None):
-        self.content, self.error, self.calls = content, error, []
-
-    def create(self, **kwargs):
-        self.calls.append(kwargs)
-        if self.error:
-            raise self.error
-        return SimpleNamespace(
-            choices=[SimpleNamespace(message=SimpleNamespace(content=self.content))],
-            usage=SimpleNamespace(prompt_tokens=321, completion_tokens=45),
-        )
-
-
-def fake_client(**kw):
-    completions = FakeCompletions(**kw)
-    return SimpleNamespace(chat=SimpleNamespace(completions=completions)), completions
 
 
 def test_heuristic_extracts_skills_seniority_salary():
@@ -66,30 +59,58 @@ def test_heuristic_does_not_match_skill_substrings():
     assert "go" not in f.skills and "django" in f.skills
 
 
+def extractor(fake: FakeOpenAI, store=None, **guard_kw) -> LLMExtractor:
+    guard = BudgetGuard(store or MemoryUsageStore(), **guard_kw)
+    return LLMExtractor(LLMCaller(fake.client(), LLMConfig(model="gpt-6-luna"), guard))
+
+
 def test_llm_extractor_uses_strict_schema_and_records_usage():
-    payload = {
-        "seniority": "senior", "skills": ["python"],
-        "salary": {"min": 1, "max": 2, "currency": "USD", "period": "year"}, "remote": True,
-        "location_restriction": None, "role_family": "backend", "summary": "x", "risk_flags": [],
-    }  # fmt: skip
-    client, completions = fake_client(content=json.dumps(payload))
-    result = LLMExtractor(client, "gpt-4o-mini").extract(posting())
-    assert result.method == "llm"
-    assert result.fields.role_family == "backend"
-    assert (result.input_tokens, result.output_tokens) == (321, 45)
-    fmt = completions.calls[0]["response_format"]
+    fake = FakeOpenAI(usage={"prompt": 321, "completion_tokens": 45, "reasoning": 12})
+    result = extractor(fake).extract(posting())
+    assert result.method == "llm" and result.fallback_reason is None
+    assert result.fields.role_family == "backend" and result.fields.employment_type == "full_time"
+    assert (result.input_tokens, result.output_tokens, result.reasoning_tokens) == (321, 45, 12)
+    assert result.cost_usd == pytest.approx((321 * 0.10 + 45 * 0.50) / 1e6) and result.model == "gpt-6-luna"
+    fmt = fake.requests[0]["response_format"]
     assert fmt["type"] == "json_schema" and fmt["json_schema"]["strict"] is True
+    assert "temperature" not in fake.requests[0]  # gpt-6-luna takes no temperature
 
 
-def test_llm_extractor_falls_back_on_invalid_json_or_schema():
+def test_llm_extractor_falls_back_on_invalid_json_or_schema_with_a_warning(caplog):
     for content in ("not json", json.dumps({"seniority": "wizard"})):
-        client, _ = fake_client(content=content)
-        assert LLMExtractor(client, "m").extract(posting()).method == "heuristic"
+        caplog.clear()
+        result = extractor(FakeOpenAI(content=content)).extract(posting())
+        assert result.method == "heuristic" and result.fallback_reason == "invalid_output"
+        assert result.cost_usd > 0  # billed anyway, and counted
+        assert "invalid output" in caplog.text and "using rules" in caplog.text
 
 
-def test_llm_extractor_falls_back_on_api_error():
-    client, _ = fake_client(error=RuntimeError("rate limited"))
-    assert LLMExtractor(client, "m").extract(posting()).method == "heuristic"
+def test_llm_extractor_falls_back_on_api_error_with_a_warning(caplog):
+    fake = FakeOpenAI(script=[httpx.Response(429, json={"error": {"message": "rate limited"}})])
+    result = extractor(fake).extract(posting())
+    assert result.method == "heuristic" and result.fallback_reason == "error"
+    assert "LLM extraction failed" in caplog.text and "using rules" in caplog.text
+
+
+def test_llm_extractor_falls_back_without_calling_when_the_budget_says_no(caplog):
+    fake = FakeOpenAI()
+    result = extractor(fake, monthly_budget_usd=0.0).extract(posting())
+    assert result.method == "heuristic" and result.fallback_reason == "budget"
+    assert fake.requests == [] and "monthly AI budget reached" in caplog.text
+
+
+def test_fallbacks_are_counted_in_run_stats():
+    stats: dict = {}
+    report = DiscoveryReport()
+    ok = extractor(FakeOpenAI()).extract(posting())
+    bad = extractor(FakeOpenAI(content="nope")).extract(posting())
+    broke = extractor(FakeOpenAI(script=[httpx.Response(500, json={})])).extract(posting())
+    for e in (ok, bad, broke):
+        count_llm(stats, e)
+        count_llm(report, e)
+    assert stats["llm_calls"] == 2 and stats["llm_fallbacks"] == {"invalid_output": 1, "error": 1}
+    assert report.llm_calls == 2 and report.llm_fallbacks == {"invalid_output": 1, "error": 1}
+    assert stats["reasoning_tokens"] == 240 and stats["llm_cost_usd"] == pytest.approx(ok.cost_usd + bad.cost_usd)
 
 
 def test_strict_schema_requires_every_property_recursively():
@@ -101,4 +122,5 @@ def test_strict_schema_requires_every_property_recursively():
 
 
 def test_build_extractor_without_key_uses_rules():
-    assert isinstance(build_extractor(), HeuristicExtractor)
+    assert isinstance(build_extractor(ai_settings(openai_api_key="")), HeuristicExtractor)
+    assert isinstance(build_extractor(ai_settings(), client=FakeOpenAI().client()), LLMExtractor)
