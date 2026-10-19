@@ -1,11 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { fetchJobs, type Job } from "@/lib/api";
+import { fetchJobs, getMatch, type Job } from "@/lib/api";
 import { formatDate, scoreColor } from "@/lib/utils";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Briefcase, Building2, MapPin, Loader2 } from "lucide-react";
+import { EligibilityBadge, TopReasons, WhyThisScore } from "@/components/ScoreDetails";
+import { Briefcase, Building2, Eye, EyeOff, MapPin, Loader2 } from "lucide-react";
 
 type Filters = {
   source?: number;
@@ -20,21 +21,43 @@ export function JobsList({ filters, onPageChange, refreshKey = 0 }: JobsListProp
   const [data, setData] = useState<{ items: Job[]; total: number; pages: number } | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // Jobs that are known not to be open to the profile's location are hidden unless asked for.
+  const [showIneligible, setShowIneligible] = useState(false);
+  const [ineligibleCount, setIneligibleCount] = useState<number | null>(null);
 
   useEffect(() => {
+    let cancelled = false;
+    const common = { source: filters.source, min_score: filters.min_score, q: filters.q || undefined };
     setLoading(true);
     setError(null);
-    fetchJobs({
-      source: filters.source,
-      min_score: filters.min_score,
-      q: filters.q || undefined,
-      page: filters.page,
-      page_size: 20,
-    })
-      .then((r) => setData({ items: r.items, total: r.total, pages: r.pages }))
-      .catch((e) => setError(e instanceof Error ? e.message : "Failed to load"))
-      .finally(() => setLoading(false));
-  }, [filters.source, filters.min_score, filters.q, filters.page, refreshKey]);
+    Promise.all([
+      fetchJobs({ ...common, page: filters.page, page_size: 20, eligible: showIneligible ? "any" : "true,unknown" }),
+      // Only the total is needed for the toggle label.
+      fetchJobs({ ...common, page: 1, page_size: 1, eligible: "false" }).then((r) => r.total, () => null),
+    ])
+      .then(([r, hidden]) => {
+        if (cancelled) return;
+        setData({ items: r.items, total: r.total, pages: r.pages });
+        setIneligibleCount(hidden);
+      })
+      .catch((e) => !cancelled && setError(e instanceof Error ? e.message : "Failed to load"))
+      .finally(() => !cancelled && setLoading(false));
+    return () => {
+      cancelled = true;
+    };
+  }, [filters.source, filters.min_score, filters.q, filters.page, refreshKey, showIneligible]);
+
+  const toggleIneligible = () => {
+    setShowIneligible((v) => !v);
+    onPageChange?.(1);
+  };
+  const ineligibleToggle =
+    ineligibleCount != null && ineligibleCount > 0 ? (
+      <Button variant="outline" size="sm" onClick={toggleIneligible} aria-pressed={showIneligible}>
+        {showIneligible ? <EyeOff className="h-4 w-4" aria-hidden="true" /> : <Eye className="h-4 w-4" aria-hidden="true" />}
+        {showIneligible ? "Hide" : "Show"} {ineligibleCount} job{ineligibleCount !== 1 ? "s" : ""} not open to your location
+      </Button>
+    ) : null;
 
   if (error) {
     return (
@@ -66,7 +89,10 @@ export function JobsList({ filters, onPageChange, refreshKey = 0 }: JobsListProp
           <div className="flex flex-col items-center justify-center gap-3 text-center">
             <Briefcase className="h-12 w-12 text-muted-foreground/40" />
             <p className="text-muted-foreground font-medium">No jobs found</p>
-            <p className="text-sm text-muted-foreground/70">Add a source and trigger a scrape to get started.</p>
+            <p className="text-sm text-muted-foreground/70">
+              {ineligibleCount ? "Every match is outside your location." : "Add a source and trigger a scrape to get started."}
+            </p>
+            {ineligibleToggle}
           </div>
         </CardContent>
       </Card>
@@ -75,10 +101,13 @@ export function JobsList({ filters, onPageChange, refreshKey = 0 }: JobsListProp
 
   return (
     <div className="space-y-4 animate-fade-in">
-      <div className="flex items-center justify-between">
-        <p className="text-sm font-medium text-muted-foreground">
-          <span className="text-foreground font-semibold">{data.total}</span> job{data.total !== 1 ? "s" : ""} <span className="text-muted-foreground/60">(page {filters.page} of {data.pages})</span>
-        </p>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-3">
+          <p className="text-sm font-medium text-muted-foreground">
+            <span className="text-foreground font-semibold">{data.total}</span> job{data.total !== 1 ? "s" : ""} <span className="text-muted-foreground/60">(page {filters.page} of {data.pages})</span>
+          </p>
+          {ineligibleToggle}
+        </div>
         {onPageChange && data.pages > 1 && (
           <div className="flex gap-2">
             <Button
@@ -111,6 +140,7 @@ export function JobsList({ filters, onPageChange, refreshKey = 0 }: JobsListProp
 
 function JobCard({ job }: { job: Job }) {
   const score = job.analysis?.score;
+  const match = getMatch(job);
   return (
     <Card className="transition-all duration-300 hover:border-primary/50 hover:shadow-lg hover:shadow-primary/10 hover:-translate-y-1 border-border/50 group">
       <CardHeader className="pb-3">
@@ -145,13 +175,15 @@ function JobCard({ job }: { job: Job }) {
             </span>
           )}
         </div>
-        {job.analysis?.seniority && (
-          <div className="mt-2">
+        <div className="flex flex-wrap items-center gap-2 mt-2">
+          {job.analysis && <EligibilityBadge match={match} />}
+          {job.analysis?.seniority && (
             <span className="inline-flex items-center rounded-full bg-primary/10 px-2.5 py-0.5 text-xs font-medium text-primary border border-primary/20">
               {job.analysis.seniority}
             </span>
-          </div>
-        )}
+          )}
+        </div>
+        {match && <TopReasons match={match} />}
         {job.analysis?.skills && job.analysis.skills.length > 0 && (
           <div className="flex flex-wrap gap-1.5 mt-3">
             {job.analysis.skills.slice(0, 5).map((s) => (
@@ -170,9 +202,12 @@ function JobCard({ job }: { job: Job }) {
           </div>
         )}
       </CardHeader>
-      {job.description && (
+      {(job.description || match) && (
         <CardContent className="pt-0">
-          <p className="line-clamp-2 text-sm text-muted-foreground leading-relaxed">{job.description}</p>
+          {job.description && (
+            <p className="line-clamp-2 text-sm text-muted-foreground leading-relaxed">{job.description}</p>
+          )}
+          {match && <WhyThisScore match={match} />}
         </CardContent>
       )}
     </Card>
