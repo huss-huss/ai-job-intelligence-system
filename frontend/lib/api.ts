@@ -68,6 +68,15 @@ export function getRank(job: Job): number | null {
   return typeof r === "number" ? r : null;
 }
 
+/**
+ * Whose score a job carries. With a token GET /api/jobs returns the viewer's own score in the same fields
+ * ("user"), or the public one for a job not scored for them yet ("public"); without a token it's null.
+ */
+export function getScoreScope(job: Job): "user" | "public" | null {
+  const s = job.analysis?.extracted_json?.score_scope;
+  return s === "user" || s === "public" ? s : null;
+}
+
 export type JobSort = "rank" | "score" | "recent";
 
 /** Location eligibility filter for GET /api/jobs: "any" or a comma-separated subset of true,false,unknown. */

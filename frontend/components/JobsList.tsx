@@ -1,13 +1,13 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { fetchApplications, fetchJobs, hasViewerToken, getHire, getMatch, getRank, updateApplication, type ApplicationStatus, type Job, type JobSort } from "@/lib/api";
+import { fetchApplications, fetchJobs, fetchMe, hasViewerToken, getHire, getMatch, getRank, getScoreScope, updateApplication, type ApplicationStatus, type Job, type JobSort } from "@/lib/api";
 import { formatDate, scoreColor } from "@/lib/utils";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { EligibilityBadge, HireBadge, TopReasons, WhyThisScore } from "@/components/ScoreDetails";
 import { StatusBadge, StatusFilterSelect, StatusSelect, statusParam, useAuthKey, type StatusFilter } from "@/components/Tracker";
-import { Briefcase, Building2, Eye, EyeOff, MapPin, Loader2 } from "lucide-react";
+import { Briefcase, Building2, Eye, EyeOff, MapPin, Loader2, UserRound } from "lucide-react";
 
 type Filters = {
   source?: number;
@@ -32,6 +32,8 @@ export function JobsList({ filters, onPageChange, refreshKey = 0 }: JobsListProp
   const [statusError, setStatusError] = useState<string | null>(null);
   // Tracker statuses are private: without a valid token this is the public view, with none of them.
   const [privateView, setPrivateView] = useState(false);
+  // With a token the API scores and ranks every job for that viewer (user_job_scores).
+  const [rankedFor, setRankedFor] = useState<string | null>(null);
   const authKey = useAuthKey();
 
   useEffect(() => {
@@ -39,7 +41,9 @@ export function JobsList({ filters, onPageChange, refreshKey = 0 }: JobsListProp
     setLoading(true);
     setError(null);
     (async () => {
-      const apps = hasViewerToken() ? await fetchApplications().catch(() => null) : null;
+      const [apps, me] = hasViewerToken()
+        ? await Promise.all([fetchApplications().catch(() => null), fetchMe().catch(() => null)])
+        : [null, null];
       const isPrivate = apps !== null;
       const common = {
         source: filters.source,
@@ -60,6 +64,7 @@ export function JobsList({ filters, onPageChange, refreshKey = 0 }: JobsListProp
       ]);
       if (cancelled) return;
       setPrivateView(isPrivate);
+      setRankedFor(isPrivate ? me?.display_name ?? null : null);
       setData({ items: r.items, total: r.total, pages: r.pages });
       setIneligibleCount(hidden);
       setStatuses(apps ? Object.fromEntries(apps.map((a) => [a.job_id, a.status])) : {});
@@ -156,6 +161,15 @@ export function JobsList({ filters, onPageChange, refreshKey = 0 }: JobsListProp
           <p className="text-sm font-medium text-muted-foreground">
             <span className="text-foreground font-semibold">{data.total}</span> job{data.total !== 1 ? "s" : ""} <span className="text-muted-foreground/60">(page {filters.page} of {data.pages})</span>
           </p>
+          {rankedFor && (
+            <span
+              className="inline-flex items-center gap-1 rounded-full border border-primary/30 bg-primary/10 px-2.5 py-0.5 text-xs font-medium text-primary"
+              title="Scores, ranking and filters use this profile"
+            >
+              <UserRound className="h-3.5 w-3.5" aria-hidden="true" />
+              Ranked for {rankedFor}
+            </span>
+          )}
           {statusSelect}
           {ineligibleToggle}
         </div>
@@ -201,6 +215,8 @@ function JobCard({ job, status, onStatus }: { job: Job; status: ApplicationStatu
   const match = getMatch(job);
   const hire = getHire(job);
   const rank = getRank(job);
+  // Private view only: a job not scored for this viewer yet shows the public score, and says so.
+  const publicScore = getScoreScope(job) === "public";
   return (
     <Card className="transition-all duration-300 hover:border-primary/50 hover:shadow-lg hover:shadow-primary/10 hover:-translate-y-1 border-border/50 group">
       <CardHeader className="pb-3">
@@ -221,6 +237,11 @@ function JobCard({ job, status, onStatus }: { job: Job; status: ApplicationStatu
               <div className={`score-badge ${scoreColor(rank / 100)}`} title="Rank: fit and hire chance combined">
                 <span className="font-bold">#{rank}</span>
               </div>
+            )}
+            {publicScore && (
+              <span className="text-xs text-muted-foreground" title="Not scored for your profile yet: this is the public score">
+                public score
+              </span>
             )}
             {score != null && (
               <div className={`score-badge ${scoreColor(score)}`} title="Fit score">

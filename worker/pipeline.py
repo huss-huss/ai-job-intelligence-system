@@ -316,6 +316,45 @@ def select_for_llm(scored: list[ScoredJob], n: int) -> list[int]:
     return order[:n]
 
 
+def fair_select(ranked: dict[Any, list[int]], n: int, *, start: int = 0) -> tuple[list[int], dict[int, Any], int]:
+    """Share `n` LLM extractions across users: round-robin over each user's own ranked job ids.
+
+    On their turn a user adds their best job that isn't picked yet, so every user's list contributes
+    about n / users jobs and a job at the top of two lists is extracted once (it helps both). Turns
+    start at the `start`-th user (rotated daily by the caller, so no one always gets the odd extra).
+    Returns (job ids in pick order, {job id: the user whose turn picked it}, jobs skipped as already picked).
+    """
+    users = list(ranked)
+    if n <= 0 or not users:
+        return [], {}, 0
+    users = users[start % len(users) :] + users[: start % len(users)]
+    picked: list[int] = []
+    seen: set[int] = set()
+    picked_for: dict[int, Any] = {}
+    cursor = {u: 0 for u in users}
+    deduped = 0
+    while len(picked) < n:
+        progressed = False
+        for u in users:
+            if len(picked) >= n:
+                break
+            jobs = ranked[u]
+            while cursor[u] < len(jobs) and jobs[cursor[u]] in seen:
+                cursor[u] += 1
+                deduped += 1
+            if cursor[u] >= len(jobs):
+                continue
+            job_id = jobs[cursor[u]]
+            cursor[u] += 1
+            picked.append(job_id)
+            seen.add(job_id)
+            picked_for[job_id] = u
+            progressed = True
+        if not progressed:
+            break
+    return picked, picked_for, deduped
+
+
 def count_llm(report: DiscoveryReport | dict, extraction: Extraction) -> None:
     """Add one job's LLM usage (or fallback) to run stats: a DiscoveryReport or a stats dict."""
     calls = extraction.method == "llm" or extraction.cost_usd > 0
