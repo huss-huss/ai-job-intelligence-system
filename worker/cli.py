@@ -6,7 +6,9 @@
     python -m worker.cli repair-text --dry-run   # needs DATABASE_URL
     python -m worker.cli telegram-setup --url https://<api-host>   # needs TELEGRAM_* env vars
     python -m worker.cli telegram-test
+    python -m worker.cli llm-eval --jobs 20 --dry-run   # needs DATABASE_URL; --run calls the model
     python -m worker.cli llm-enrich                     # the daily LLM step, on its own (needs DATABASE_URL)
+    python -m worker.cli set-resume resume.pdf          # the owner's resume for cover letters
 """
 
 from __future__ import annotations
@@ -232,10 +234,86 @@ def cmd_telegram_digest(args) -> int:
     return _telegram().digest(dry_run=args.dry_run)
 
 
+def cmd_llm_eval(args) -> int:
+    from sqlalchemy.orm import Session
+
+    url = _database_url(args)
+    if not url:
+        return 2
+    engine = _engine(url)
+    from worker import llm_eval
+    from worker.ai import LLMExtractor
+    from worker.budget import BudgetGuard, SqlUsageStore
+    from worker.llm import LLMCaller, LLMConfig, make_client, price_for
+    from worker.tasks import _load_profile, _to_posting
+
+    n = max(1, min(args.jobs, llm_eval.MAX_JOBS))
+    with Session(engine) as session:
+        jobs = llm_eval.pick_jobs(session, n)
+        items = [(f"#{job.id} {job.title}", _to_posting(job)) for job in jobs]
+    if not items:
+        print("No analyzed jobs stored yet; run the daily discovery first.", file=sys.stderr)
+        return 1
+    config = LLMConfig.from_settings(settings)
+    guard = BudgetGuard.from_settings(settings, SqlUsageStore(lambda: Session(engine)))
+    price = price_for(config.model, config.prices_json) if not config.free else None
+    if price is None and not config.free:
+        print(f"No price known for {config.model}; add it to LLM_PRICES_JSON.", file=sys.stderr)
+        return 2
+    from worker.llm import Price
+
+    est = llm_eval.estimate([p for _, p in items], price or Price(0, 0))
+    left = guard.monthly_budget_usd - guard.summary().month_cost
+    llm_eval.print_estimate(est, config.model, left)
+    if args.dry_run:
+        print("dry run: nothing was sent")
+        return 0
+    client = make_client(settings)
+    if client is None:
+        print("OPENAI_API_KEY (or LLM_BASE_URL) must be set for --run", file=sys.stderr)
+        return 2
+    if est.worst_usd > left:
+        print("Refusing: the worst case would go over this month's budget. Try fewer --jobs.", file=sys.stderr)
+        return 1
+    extractor = LLMExtractor(LLMCaller(client, config, guard))
+    profile, now = _load_profile(), llm_eval.now_utc()
+    rows = []
+    for label, posting in items:
+        rows.append(llm_eval.compare(label, posting, extractor.extract(posting, feature="eval", count_daily=False),
+                                     profile, now))  # fmt: skip
+    llm_eval.print_table(rows)
+    return 0
+
+
 def cmd_llm_enrich(args) -> int:
     from worker.tasks import run_llm_enrich_task
 
     print(json.dumps(run_llm_enrich_task(), indent=2, default=str))
+    return 0
+
+
+def cmd_set_resume(args) -> int:
+    from sqlalchemy.orm import Session
+
+    from worker.cover_letter import ResumeError, resume_from_file
+
+    url = _database_url(args)
+    if not url:
+        return 2
+    path = Path(args.path)
+    try:
+        text = resume_from_file(path.name, path.read_bytes())
+    except (OSError, ResumeError) as exc:
+        print(f"Can't use {path}: {exc}", file=sys.stderr)
+        return 1
+    from app import users
+
+    with Session(_engine(url)) as session:
+        owner = users.ensure_owner(session, os.environ.get("TELEGRAM_CHAT_ID"))
+        owner.resume_text = text
+        owner.resume_updated_at = users.utcnow()
+        session.commit()
+    print(f"Stored the owner's resume ({len(text.split())} words) for cover letters.")
     return 0
 
 
@@ -282,8 +360,21 @@ def main(argv: list[str] | None = None) -> int:
     td.add_argument("--dry-run", action="store_true", help="print what would be sent; nothing is sent or marked")
     td.set_defaults(func=cmd_telegram_digest)
 
+    e = sub.add_parser("llm-eval", help="compare rules and LLM extraction on recent stored jobs (needs DATABASE_URL)")
+    e.add_argument("--jobs", type=int, default=20, help="how many recent jobs (at most 50)")
+    mode = e.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--dry-run", action="store_true", help="print the estimated cost; nothing is sent")
+    mode.add_argument("--run", action="store_true", help="call the model and print where it disagrees with rules")
+    e.add_argument("--database-url", help="defaults to $DATABASE_URL")
+    e.set_defaults(func=cmd_llm_eval)
+
     le = sub.add_parser("llm-enrich", help="LLM extraction for today's top jobs, within the budget")
     le.set_defaults(func=cmd_llm_enrich)
+
+    sr = sub.add_parser("set-resume", help="store the owner's resume (.txt, .md or .pdf) for cover letters")
+    sr.add_argument("path")
+    sr.add_argument("--database-url", help="defaults to $DATABASE_URL")
+    sr.set_defaults(func=cmd_set_resume)
 
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO if args.verbose else logging.WARNING, format="%(levelname)s %(message)s")
