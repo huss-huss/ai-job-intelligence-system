@@ -32,3 +32,9 @@ def get_sync_session() -> Generator[Session, None, None]:
         raise
     finally:
         session.close()
+
+
+def get_sync_db() -> Generator[Session, None, None]:
+    """FastAPI dependency for sync routes (FastAPI runs them in a thread pool)."""
+    with get_sync_session() as session:
+        yield session

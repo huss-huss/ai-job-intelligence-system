@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.config import settings
-from app.routes import analyze, cron, health, jobs, runs, scrape, sources
+from app.routes import analyze, applications, cron, health, jobs, runs, scrape, sources, talent
 
 
 @asynccontextmanager
@@ -72,6 +72,8 @@ app.include_router(scrape.router)
 app.include_router(runs.router)
 app.include_router(analyze.router)
 app.include_router(cron.router)
+app.include_router(applications.router)
+app.include_router(talent.router)
 
 
 if __name__ == "__main__":

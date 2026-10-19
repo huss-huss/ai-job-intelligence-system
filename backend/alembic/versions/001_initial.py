@@ -69,7 +69,8 @@ def upgrade() -> None:
     op.create_index("ix_jobs_analysis_score", "jobs_analysis", ["score"])
     op.create_index("ix_jobs_analysis_seniority", "jobs_analysis", ["seniority"])
 
-    op.execute("CREATE EXTENSION IF NOT EXISTS vector")
+    if op.get_bind().dialect.name == "postgresql":  # SQLite (tests) has no extensions
+        op.execute("CREATE EXTENSION IF NOT EXISTS vector")
     op.create_table(
         "embeddings",
         sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),

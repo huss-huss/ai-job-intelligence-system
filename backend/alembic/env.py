@@ -37,7 +37,12 @@ def run_migrations_offline() -> None:
 
 
 def do_run_migrations(connection: Connection) -> None:
-    context.configure(connection=connection, target_metadata=target_metadata)
+    # include_object lets tests limit `alembic check` to the tables they own.
+    context.configure(
+        connection=connection,
+        target_metadata=target_metadata,
+        include_object=config.attributes.get("include_object"),
+    )
     with context.begin_transaction():
         context.run_migrations()
 
@@ -51,8 +56,16 @@ async def run_async_migrations() -> None:
 
 
 def run_migrations_online() -> None:
-    """Run migrations in 'online' mode (async)."""
-    asyncio.run(run_async_migrations())
+    """Run migrations in 'online' mode (async).
+
+    A caller may hand over its own connection in config.attributes["connection"] (tests use this
+    to migrate SQLite or a throwaway Postgres without going through DATABASE_URL).
+    """
+    connection = config.attributes.get("connection")
+    if connection is not None:
+        do_run_migrations(connection)
+    else:
+        asyncio.run(run_async_migrations())
 
 
 if context.is_offline_mode():
