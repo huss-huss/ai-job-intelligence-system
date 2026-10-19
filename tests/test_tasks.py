@@ -120,3 +120,83 @@ def test_scrape_fetches_full_descriptions_for_new_postings_only(monkeypatch):
     assert run.stats["full_descriptions"]["candidates"] == 2
     rows = [o for o in session.added if isinstance(o, JobRaw)]
     assert all("React Native with TypeScript" in r.description for r in rows)
+
+
+# --- hire probability inputs and outputs --------------------------------------------------------
+
+
+def _freehire_posting():
+    from worker.sources.freehire import FreeHireAdapter
+
+    rows = json.loads((FIXTURES / "freehire.json").read_text())["data"]
+    return FreeHireAdapter.parse(next(j for j in rows if j.get("source") == "ashby"))
+
+
+def test_hire_inputs_round_trip_through_jobs_raw_meta():
+    posting = _freehire_posting()
+    posting.source_urls = {"freehire": posting.url}
+    meta = _meta(posting)
+    json.dumps(meta)
+    row = JobRaw(url=posting.url, title=posting.title, company=posting.company, location=posting.location,
+                 description=posting.description, posted_at=posting.posted_at, meta=meta)  # fmt: skip
+    restored = _to_posting(row)
+    for name in ("employment_type", "seniority", "regions", "countries", "applied_count", "view_count",
+                 "timezone_note", "posting_language", "extra", "source_urls"):  # fmt: skip
+        assert getattr(restored, name) == getattr(posting, name), name
+
+
+def test_rescrape_refreshes_applicant_and_view_counts():
+    from dataclasses import replace
+
+    posting = _freehire_posting()
+    row = JobRaw(url=posting.url, title=posting.title, meta=_meta(posting))
+    tasks._refresh_meta(row, replace(posting, applied_count=9, view_count=400))
+    assert (row.meta["applied_count"], row.meta["view_count"]) == (9, 400)
+    unchanged = dict(row.meta)
+    tasks._refresh_meta(row, replace(posting, applied_count=None, view_count=None))
+    assert row.meta == unchanged
+
+
+class _AnalyzeSession:
+    def __init__(self, job: JobRaw) -> None:
+        self.job, self.added = job, []
+
+    def execute(self, stmt):
+        entity = stmt.column_descriptions[0]["entity"]
+        return _Result(self.job if entity is JobRaw else None)
+
+    def add(self, obj):
+        self.added.append(obj)
+
+    def flush(self):
+        pass
+
+    def commit(self):
+        pass
+
+
+def test_analyze_task_stores_hire_probability_and_rank(monkeypatch):
+    from app.models import JobAnalysis
+
+    posting = _freehire_posting()
+    job = JobRaw(id=5, url=posting.url, title=posting.title, company=posting.company, location=posting.location,
+                 description=posting.description, posted_at=posting.posted_at, meta=_meta(posting))  # fmt: skip
+    session = _AnalyzeSession(job)
+
+    @contextmanager
+    def fake_session():
+        yield session
+
+    monkeypatch.setattr(tasks, "get_sync_session", fake_session)
+    monkeypatch.setattr(settings, "openai_api_key", "")
+    monkeypatch.setattr(settings, "llm_base_url", "")
+    monkeypatch.setattr(settings, "notion_token", "")
+    monkeypatch.setattr(settings, "alert_webhook_url", "")
+    assert tasks.run_analyze_task([5])["processed"] == 1
+    analysis = next(o for o in session.added if isinstance(o, JobAnalysis))
+    stored = analysis.extracted_json
+    assert 0 <= analysis.score <= 1 and stored["match"]["score"] == round(analysis.score * 100)
+    assert set(stored["hire"]) == {"score", "factors", "reasons"}
+    assert stored["hire_probability"] == stored["hire"]["score"]
+    assert stored["hire"]["factors"]["eligibility"] == 1.0  # "Remote, Global"
+    assert stored["rank"] == round(100 * (stored["match"]["score"] / 100 * stored["hire"]["score"] / 100) ** 0.5)

@@ -17,3 +17,54 @@ sources:
     keywords: [engineer]
   - type: lever
     company: leverdemo
+
+  # --- Remote boards with official APIs / feeds -------------------------------------------
+  # FreeHire: https://freehire.me/openapi.yaml. 300 req/min on agent search; HttpClient paces on
+  # X-RateLimit-*. An ignored parameter (meta.ignored_params) fails the source loudly.
+  - type: freehire
+    name: freehire
+    defaults:
+      work_mode: remote
+      employment_type: [full_time, contract]
+      is_tech: tech
+      posted_within_days: 21
+      sort: posted_at
+      limit: 50
+    max_pages: 1                    # per query; 3 queries x 1 page = 3 requests
+    company_remote_regions: [africa] # +up to 6 cheap requests: companies hiring remotely in Africa
+    company_pages: 6
+    queries:
+      - q: 'title:backend OR title:python OR title:fastapi OR title:django OR title:"data engineer"'
+        regions: [global, africa, mena]
+      - q: 'title:"ai engineer" OR title:llm OR title:"machine learning" OR title:automation OR title:agent'
+        regions: [global, africa, mena]
+      # Postings with no resolved geography (bare "Remote"): medium eligibility certainty
+      - q: 'title:backend OR title:python OR title:"ai engineer" OR title:llm'
+        regions: [none]
+  # Djinni RSS reads primary_keyword, exp_level, english_level, employment (others are refused).
+  - type: djinni
+    name: djinni
+    employment: remote
+    max_age_days: 30
+    queries:
+      - primary_keyword: Python
+      - primary_keyword: ML AI
+      - primary_keyword: Data Engineer
+  # We Work Remotely: one RSS feed per category; listings link back to weworkremotely.com.
+  - type: weworkremotely
+    name: weworkremotely
+    max_age_days: 45
+    categories: [back-end-programming, full-stack-programming, devops-sysadmin, programming]
+  # Jobicy: sync at most once per hour (their docs); credit Jobicy and keep its listing URL.
+  - type: jobicy
+    name: jobicy
+    count: 50
+    queries:
+      - {geo: anywhere, industry: engineering}
+      - {geo: anywhere, industry: data-science}
+      - {geo: emea, tag: python}
+  # Working Nomads: latest listings, no server-side filters.
+  - type: workingnomads
+    name: workingnomads
+    categories: [Development]
+    keywords: [python, backend, back-end, ai, llm, machine learning, data engineer, automation]

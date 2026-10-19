@@ -1,0 +1,505 @@
+{
+ "data": [
+  {
+   "public_slug": "software-development-leader-genai-llm-engineering-deloitte-idrdpdko",
+   "source": "comeet",
+   "manually_added": false,
+   "external_id": "deloitte/F7.00B:C5.279",
+   "url": "https://careers.deloitte.co.il/position/c5-279-en/?utm_source=freehire.me",
+   "title": "Software Development Leader – GenAI & LLM Engineering",
+   "company": "Deloitte",
+   "company_slug": "deloitte",
+   "location": "Tel Aviv, Tel Aviv District",
+   "description": "We are seeking a talented *Software Development Leader* with a strong background in Large Language Models (LLM) and GenAI engineering.\n\nThis is a unique opportunity to work with Deloitte US clients and engage in global projects, leveraging your extensive skills in generative AI tools.\n\nAs a pivotal member of our team, you will be responsible for translating complex business problems into data-driven solutions, drafting methodologies, and executing innovative projects.\n\n*In This Role You Will*\n\n* Lead development of robust, efficient, and scalable Python code, ensuring adherence to best practices in software engineering and optimization for high-performance applications.\n* Utilize GenAI ...",
+   "countries": [
+    "il"
+   ],
+   "regions": [
+    "mena"
+   ],
+   "work_mode": "remote",
+   "skills": [
+    "ai",
+    "api",
+    "aws",
+    "aws-bedrock",
+    "azure",
+    "chromadb",
+    "cloud",
+    "data-science",
+    "docker",
+    "fastapi",
+    "gcp",
+    "generative-ai"
+   ],
+   "cities": [
+    "Tel Aviv"
+   ],
+   "collections": [],
+   "is_tech": "tech",
+   "posted_at": "2026-10-19T07:59:39Z",
+   "created_at": "2026-09-09T07:58:19Z",
+   "updated_at": "2026-10-19T08:59:15Z",
+   "last_seen_at": "2026-10-19T10:59:50Z",
+   "closed_at": null,
+   "enrichment": {
+    "summary": "Leads GenAI/LLM engineering work for Deloitte's US clients from Tel Aviv (hybrid): building scalable Python back ends and applying LangChain, RAG, agents, and vector databases to turn complex business problems into data-driven solutions.",
+    "employment_type": "full_time",
+    "experience_years_min": 8,
+    "english_level": "c1",
+    "education_level": "master",
+    "category": "ai_engineering",
+    "domains": [
+     "other"
+    ],
+    "posting_language": "en",
+    "company_type": "outsource",
+    "company_size": "1000+"
+   },
+   "enriched_at": "2026-09-09T07:59:06Z",
+   "enrichment_version": 2,
+   "view_count": 31,
+   "applied_count": 0,
+   "upvote_count": 0,
+   "downvote_count": 0,
+   "my_vote": 0,
+   "reality": {
+    "class": "stale",
+    "age_days": 40,
+    "repost_count": 1,
+    "mass_posting_count": 1,
+    "fake_freshness": false
+   }
+  },
+  {
+   "public_slug": "finops-data-engineer-supabase-ea63ogg7",
+   "source": "ashby",
+   "manually_added": false,
+   "external_id": "supabase:73ddf93b-fe0c-455d-ba27-cdde0d3fb94f",
+   "url": "https://jobs.ashbyhq.com/supabase/73ddf93b-fe0c-455d-ba27-cdde0d3fb94f?utm_source=freehire.me",
+   "title": "FinOps Data Engineer ",
+   "company": "Supabase",
+   "company_slug": "supabase",
+   "location": "Remote, Global",
+   "description": "*About the Role*\n\nWe're looking for a FinOps Data Engineer to help drive cost optimization and cloud financial governance across our AWS infrastructure and GCP footprint. You'll work cross-functionally with Engineering, Finance, and Product to find and ship savings, build the tooling necessary to maximize efficiency of every dollar spent in the cloud, and cultivate a culture of cost awareness across engineering teams. This role owns the data side of that mission: the models, pipelines, and analysis that make cost, usage, and margin numbers trustworthy across the company.\n\nThis is a hands-on engineering role, not an analyst seat. You'll do the schlep work other teams don't have time for, ...",
+   "countries": [],
+   "regions": [
+    "global"
+   ],
+   "work_mode": "remote",
+   "skills": [
+    "analytics",
+    "anomaly-detection",
+    "automation",
+    "aws",
+    "bash",
+    "bigquery",
+    "cloud",
+    "data-analytics",
+    "data-engineering",
+    "data-modeling",
+    "data-pipelines",
+    "data-science"
+   ],
+   "cities": [],
+   "collections": [],
+   "is_tech": "tech",
+   "auto_apply_available": true,
+   "posted_at": "2026-10-14T16:54:28Z",
+   "created_at": "2026-10-14T17:25:47Z",
+   "updated_at": "2026-10-14T17:27:30Z",
+   "last_seen_at": "2026-10-19T07:31:37Z",
+   "closed_at": null,
+   "enrichment": {
+    "summary": "A hands-on FinOps Data Engineer at Supabase who builds and maintains the data side of cloud cost management: BigQuery/dbt pipelines and models over AWS and GCP billing/usage data, cost-vs-revenue and unit-economics marts, forecasting and anomaly detection, and automated cost governance — working cross-functionally with Engineering and Finance to find and ship savings.",
+    "employment_type": "full_time",
+    "timezone_note": "Fully remote, global hiring; the team operates asynchronously with flexible hours.",
+    "category": "data_engineering",
+    "domains": [
+     "devtools"
+    ],
+    "posting_language": "en",
+    "company_type": "product",
+    "company_size": "201-500"
+   },
+   "enriched_at": "2026-10-14T17:27:30Z",
+   "enrichment_version": 2,
+   "view_count": 19,
+   "applied_count": 0,
+   "upvote_count": 0,
+   "downvote_count": 0,
+   "my_vote": 0,
+   "reality": {
+    "class": "fresh",
+    "age_days": 4,
+    "repost_count": 1,
+    "mass_posting_count": 1,
+    "fake_freshness": false
+   }
+  },
+  {
+   "public_slug": "backend-software-engineer-python-postgres-remote-global-enveritas-etbpuh26",
+   "source": "greenhouse",
+   "manually_added": false,
+   "external_id": "enveritas:4006514008",
+   "url": "https://job-boards.greenhouse.io/enveritas/jobs/4006514008?utm_source=freehire.me",
+   "title": "Backend Software Engineer - Python/Postgres [Remote / Global]",
+   "company": "Enveritas",
+   "company_slug": "enveritas",
+   "location": "Global - Remote Work",
+   "description": "Do you want to work for a mission-driven non-profit, writing software that will contribute to helping the livelihoods of millions of coffee farmers around the world? Enveritas is a 501(c)(3) non-profit and Y Combinator-backed startup looking to hire for our Engineering & Data Group. We are looking for a backend software engineer with a focus on python and PostgreSQL to join our EUDR engineering team on a remote/global, full-time basis. You can learn more about this job and our group at\n\nWe're a small team and every hire makes a large impact, so we're careful and thorough when it comes to hiring, but we are actively considering candidates and moving them through the process as quickly as we ...",
+   "countries": [],
+   "regions": [
+    "global"
+   ],
+   "work_mode": "remote",
+   "skills": [
+    "aws",
+    "bash",
+    "ci-cd",
+    "design-patterns",
+    "django",
+    "docker",
+    "ec2",
+    "flask",
+    "github",
+    "linux",
+    "observability",
+    "postgresql"
+   ],
+   "cities": [],
+   "collections": [
+    "yc"
+   ],
+   "is_tech": "tech",
+   "auto_apply_available": true,
+   "posted_at": "2026-10-07T16:40:21Z",
+   "created_at": "2026-06-16T21:02:36Z",
+   "updated_at": "2026-10-07T20:17:37Z",
+   "last_seen_at": "2026-10-19T02:11:39Z",
+   "closed_at": null,
+   "enrichment": {
+    "summary": "Build and maintain Python/PostgreSQL backend services for a non-profit tracking deforestation risks in coffee supply chains, using AWS and geospatial tools.",
+    "employment_type": "full_time",
+    "relocation": "not_supported",
+    "visa_sponsorship": true,
+    "salary_min": 135000,
+    "salary_max": 155000,
+    "salary_currency": "USD",
+    "salary_period": "year",
+    "education_level": "bachelor",
+    "category": "backend",
+    "domains": [
+     "other"
+    ],
+    "posting_language": "en"
+   },
+   "enriched_at": "2026-07-20T14:24:55Z",
+   "enrichment_version": 2,
+   "view_count": 165,
+   "applied_count": 4,
+   "upvote_count": 0,
+   "downvote_count": 0,
+   "my_vote": 0,
+   "reality": {
+    "class": "stale",
+    "age_days": 124,
+    "repost_count": 1,
+    "mass_posting_count": 1,
+    "fake_freshness": true
+   }
+  },
+  {
+   "public_slug": "senior-fullstack-engineer-remote-full-time-long-term-deepmetis-gmbh-zzrb6ssp",
+   "source": "himalayas",
+   "manually_added": false,
+   "external_id": ":https://himalayas.app/companies/deepmetis-gmbh/jobs/senior-fullstack-engineer-remote-full-time-long-term",
+   "url": "https://himalayas.app/companies/deepmetis-gmbh/jobs/senior-fullstack-engineer-remote-full-time-long-term?utm_source=freehire.me",
+   "title": "Senior Fullstack Engineer (remote | full-time | long-term)",
+   "company": "DeepMetis GmbH",
+   "company_slug": "deepmetis",
+   "location": "Tunisia",
+   "description": "Tasks\n-----\n\n* *Build and maintain high-quality web applications*\nContribute to multiple ongoing projects, clean coding both frontend and backend, building UIs from mockups to functional interfaces and integrating APIs.\n* *Take ownership*\nQuickly adjust to different tech stacks, keep track of deadlines and ensure the quality of your work. Test and document everything.\n* *Collaborate with your team*\nCollaborate with teammates on different project stacks, brainstorm project requirements and support each other to solve problems together.\n* *Grow constantly*\nWork on both the technical and business sides, that will push you to understand the bigger picture not just the ...",
+   "countries": [
+    "tn"
+   ],
+   "regions": [
+    "mena"
+   ],
+   "work_mode": "remote",
+   "skills": [
+    "ai",
+    "api",
+    "automation",
+    "claude-code",
+    "flutter",
+    "machine-learning",
+    "python",
+    "react",
+    "slack",
+    "svelte",
+    "typescript",
+    "vue"
+   ],
+   "cities": [
+    "Tunisia"
+   ],
+   "collections": [],
+   "is_tech": "tech",
+   "posted_at": "2026-10-07T05:09:36Z",
+   "created_at": "2026-10-07T07:28:19Z",
+   "updated_at": "2026-10-07T09:25:56Z",
+   "last_seen_at": "2026-10-07T19:32:47Z",
+   "closed_at": null,
+   "enrichment": {
+    "summary": "Senior fullstack engineer at a 100% remote, AI/ML-focused software company: build and maintain web applications end to end, turning mockups into working UIs and integrating APIs, while adapting to different project stacks. Frontend work spans Svelte, Vue, React or Flutter; backend is TypeScript or Python.",
+    "employment_type": "full_time",
+    "salary_min": 1100,
+    "salary_max": 2000,
+    "salary_currency": "EUR",
+    "salary_period": "month",
+    "seniority": "senior",
+    "experience_years_min": 3,
+    "english_level": "c1",
+    "category": "fullstack",
+    "domains": [
+     "ai"
+    ],
+    "posting_language": "en",
+    "company_type": "outsource",
+    "company_size": "11-50"
+   },
+   "enriched_at": "2026-10-07T09:25:56Z",
+   "enrichment_version": 2,
+   "view_count": 26,
+   "applied_count": 1,
+   "upvote_count": 0,
+   "downvote_count": 0,
+   "my_vote": 0,
+   "reality": {
+    "class": "fresh",
+    "age_days": 11,
+    "repost_count": 1,
+    "mass_posting_count": 1,
+    "fake_freshness": false
+   }
+  },
+  {
+   "public_slug": "staff-backend-engineer-python-lun-app-lun-edtcm43b",
+   "source": "djinni",
+   "manually_added": false,
+   "external_id": ":851382",
+   "url": "https://djinni.co/jobs/851382-staff-backend-engineer-python-lun-app/?utm_source=freehire.me",
+   "title": "Staff Backend Engineer (Python) / LUN App",
+   "company": "ЛУН",
+   "company_slug": "lun",
+   "location": "Europe",
+   "description": "Шукаємо досвідченого Staff Python Backend Engineer, який візьме повністю всю відповідальність за бекенд напрямок в продукті: від того, як віддаються дані, до того, наскільки швидко це відбувається.\n\nКоманда\nНад мобільним застосунком ЛУН працює окрема продуктова команда: мобільні інженери (iOS, Android), продуктова дизайнерка, Product Manager і Engineering Manager. Ми щойно завершили великий рефакторинг і зараз входимо у фазу активного розвитку продукту: багато нових фіч, багато експериментів, велика аудиторія, на якій ці експерименти реально можна перевіряти.\n\nТи будеш єдиним/-ою backend engineer в цій команді. Ти станеш людиною, яка відповідає за серверну частину застосунку: від того, як ...",
+   "countries": [],
+   "regions": [
+    "eu"
+   ],
+   "work_mode": "remote",
+   "skills": [
+    "ai",
+    "android",
+    "api",
+    "aws",
+    "docker",
+    "elasticsearch",
+    "fastapi",
+    "flask",
+    "ios",
+    "kubernetes",
+    "llm",
+    "mysql"
+   ],
+   "cities": [],
+   "collections": [],
+   "is_tech": "tech",
+   "posted_at": "2026-10-16T16:30:18Z",
+   "created_at": "2026-10-15T16:07:52Z",
+   "updated_at": "2026-10-16T14:17:03Z",
+   "last_seen_at": "2026-10-19T08:56:57Z",
+   "closed_at": null,
+   "enrichment": {
+    "summary": "Staff Python backend engineer who will fully own the backend of the LUN mobile app: shipping features after a big refactor, migrating legacy PHP (Yii) to Python, and optimizing API speed toward a 0.2s p95 target. Stack: Python (FastAPI/Flask), Celery, PostgreSQL/MySQL/Redis/Elasticsearch, RabbitMQ, Docker/K8s/AWS.",
+    "employment_type": "full_time",
+    "seniority": "staff",
+    "category": "backend",
+    "domains": [
+     "proptech"
+    ],
+    "company_type": "product"
+   },
+   "enriched_at": "2026-10-16T14:17:03Z",
+   "enrichment_version": 2,
+   "view_count": 3,
+   "applied_count": 0,
+   "upvote_count": 0,
+   "downvote_count": 0,
+   "my_vote": 0,
+   "reality": {
+    "class": "fresh",
+    "age_days": 3,
+    "repost_count": 1,
+    "mass_posting_count": 1,
+    "fake_freshness": false
+   }
+  },
+  {
+   "public_slug": "proxify-ab-senior-backend-developer-python-clouddevs-ns5hq26l",
+   "source": "whatjobs-dk",
+   "manually_added": false,
+   "external_id": "python developer:1377578",
+   "url": "https://dk.whatjobs.com/pub_api__cpl__1377578__7097?geoID=192&utm_campaign=publisher&utm_medium=api&utm_source=freehire.me",
+   "title": "Proxify AB: Senior Backend Developer (Python)",
+   "company": "CloudDevs",
+   "company_slug": "clouddevs",
+   "location": "Roskilde, Denmark",
+   "description": "Proxify AB: Senior Backend Developer (Python)\n---------------------------------------------\n\n*The Role:*\n-----------\n\nWe are looking for a Senior Python Developer for one of our clients. You are a perfect candidate if you are growth-oriented, you love what you do, and you enjoy working on new ideas to develop exciting products.\n\n*What we are looking for:*\n--------------------------\n\n5+ years of experience building products with Python and Django.\n\nHigh proficiency in SQL with experience using databases like PostgreSQL.\n\nExperience scaling cloud infrastructures with Docker or Kubernetes is a plus.\n\nExperience managing cloud infrastructures, specifically AWS or GCP.\n\nYou follow the best ...",
+   "countries": [
+    "dk"
+   ],
+   "regions": [
+    "eu"
+   ],
+   "work_mode": "remote",
+   "skills": [
+    "aws",
+    "ci-cd",
+    "cloud",
+    "django",
+    "docker",
+    "gcp",
+    "kubernetes",
+    "postgresql",
+    "python",
+    "sql"
+   ],
+   "cities": [
+    "Roskilde",
+    "Århus"
+   ],
+   "collections": [],
+   "is_tech": "tech",
+   "posted_at": "2026-09-30T13:26:31Z",
+   "created_at": "2026-09-30T13:26:31Z",
+   "updated_at": "2026-10-12T08:17:42Z",
+   "last_seen_at": "2026-10-05T23:26:37Z",
+   "closed_at": null,
+   "enrichment": {
+    "employment_type": "full_time",
+    "seniority": "senior",
+    "experience_years_min": 5,
+    "english_level": "b1",
+    "category": "backend",
+    "posting_language": "en"
+   },
+   "enriched_at": null,
+   "enrichment_version": 0,
+   "view_count": 2,
+   "applied_count": 0,
+   "upvote_count": 0,
+   "downvote_count": 0,
+   "my_vote": 0,
+   "reality": {
+    "class": "stale",
+    "age_days": 18,
+    "repost_count": 14,
+    "mass_posting_count": 4,
+    "fake_freshness": false
+   }
+  },
+  {
+   "public_slug": "senior-angular-full-stack-developer-lemon-io-73nzrtt5",
+   "source": "weworkremotely",
+   "manually_added": false,
+   "external_id": ":lemon-io-senior-angular-full-stack-developer",
+   "url": "https://weworkremotely.com/remote-jobs/lemon-io-senior-angular-full-stack-developer?utm_source=freehire.me",
+   "title": "Senior Angular Full-stack Developer",
+   "company": "Lemon.io",
+   "company_slug": "lemon-io",
+   "location": "Anywhere in the World",
+   "description": "*Headquarters:* New York, NY\n*URL:*\n\nAre you a talented Senior Developer looking for a remote job that lets you show your skills and get decent compensation? Look no further than — the marketplace that connects you with hand-picked startups in the US and Europe.\n\n*What we offer:*\n\n* The rate depends on your seniority level, skills and experience. We've already paid out over $11M to our engineers.\n* No more hunting for clients or negotiating rates — let us handle the business side of things so you can focus on what you do best.\n* We'll manually find the best project for you according to your skills and preferences.\n* Choose a schedule that works best for you. It’s possible to communicate ...",
+   "countries": [
+    "au",
+    "ca",
+    "id",
+    "il",
+    "jp",
+    "kr",
+    "ma",
+    "my",
+    "nz",
+    "pg",
+    "ph",
+    "sg"
+   ],
+   "regions": [
+    "africa",
+    "apac",
+    "eu",
+    "latam",
+    "north_america"
+   ],
+   "work_mode": "remote",
+   "skills": [
+    "ai",
+    "android",
+    "angular",
+    "automation",
+    "aws",
+    "azure",
+    "blockchain",
+    "cpp",
+    "csharp",
+    "data-engineering",
+    "data-science",
+    "developer-experience"
+   ],
+   "cities": [],
+   "collections": [],
+   "is_tech": "tech",
+   "posted_at": "2026-10-06T13:25:57Z",
+   "created_at": "2026-10-06T13:53:05Z",
+   "updated_at": "2026-10-06T14:48:07Z",
+   "last_seen_at": "2026-10-11T07:15:12Z",
+   "closed_at": null,
+   "enrichment": {
+    "summary": "Lemon.io, a talent marketplace that places senior developers with US and European startups, is hiring remote Senior Angular full-stack developers (Angular paired with PHP/Laravel, .NET, or Node.js). You work directly with clients on startup projects, on a flexible async schedule with no micromanagement or screen trackers.",
+    "employment_type": "full_time",
+    "visa_sponsorship": false,
+    "timezone_note": "Flexible schedule — async communication or minimal overlap with team working hours is acceptable.",
+    "seniority": "senior",
+    "experience_years_min": 3,
+    "english_level": "c1",
+    "category": "fullstack",
+    "domains": [
+     "hrtech"
+    ],
+    "posting_language": "en",
+    "company_type": "outstaff"
+   },
+   "enriched_at": "2026-10-06T14:48:07Z",
+   "enrichment_version": 2,
+   "view_count": 54,
+   "applied_count": 0,
+   "upvote_count": 0,
+   "downvote_count": 0,
+   "my_vote": 0,
+   "reality": {
+    "class": "fresh",
+    "age_days": 12,
+    "repost_count": 1,
+    "mass_posting_count": 1,
+    "fake_freshness": false
+   }
+  }
+ ],
+ "meta": {
+  "limit": 50,
+  "offset": 0,
+  "total": 7
+ }
+}

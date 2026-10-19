@@ -44,6 +44,32 @@ export function getMatch(job: Job): MatchInfo | null {
   };
 }
 
+/** Hire probability stored in analysis.extracted_json.hire (see worker/hire.py). */
+export type HireFactor = "eligibility" | "timezone" | "language" | "competition" | "freshness" | "seniority" | "employment";
+export type HireInfo = {
+  score: number; // 0-100
+  factors: Partial<Record<HireFactor, number>>; // each 0-1
+  reasons: string[];
+};
+
+export function getHire(job: Job): HireInfo | null {
+  const h = job.analysis?.extracted_json?.hire as Partial<HireInfo> | undefined;
+  if (!h || typeof h !== "object" || typeof h.score !== "number") return null;
+  return {
+    score: h.score,
+    factors: h.factors && typeof h.factors === "object" ? h.factors : {},
+    reasons: Array.isArray(h.reasons) ? h.reasons : [],
+  };
+}
+
+/** Ranking score: geometric mean of fit and hire probability, 0-100 (worker/hire.py rank_score). */
+export function getRank(job: Job): number | null {
+  const r = job.analysis?.extracted_json?.rank;
+  return typeof r === "number" ? r : null;
+}
+
+export type JobSort = "rank" | "score" | "recent";
+
 /** Location eligibility filter for GET /api/jobs: "any" or a comma-separated subset of true,false,unknown. */
 export type EligibleFilter = "any" | "true" | "false" | "unknown" | "true,unknown";
 
@@ -89,6 +115,7 @@ export async function fetchJobs(params: {
   page_size?: number;
   eligible?: EligibleFilter;
   status?: string; // comma-separated tracker statuses; "new" includes untracked jobs
+  sort?: JobSort;
 }): Promise<JobsResponse> {
   const sp = new URLSearchParams();
   if (params.source != null) sp.set("source", String(params.source));
@@ -98,6 +125,7 @@ export async function fetchJobs(params: {
   if (params.page_size != null) sp.set("page_size", String(params.page_size));
   if (params.eligible) sp.set("eligible", params.eligible);
   if (params.status) sp.set("status", params.status);
+  if (params.sort) sp.set("sort", params.sort);
   const res = await fetch(`${API_BASE}/api/jobs?${sp}`);
   if (!res.ok) throw new Error("Failed to fetch jobs");
   return res.json();

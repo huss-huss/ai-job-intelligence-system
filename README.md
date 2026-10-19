@@ -9,30 +9,36 @@ FirstFetch pulls listings from public job APIs, scores each one against **your**
 I built it because job boards rank by recency, not fit, and most "remote" listings quietly require living in the US. FirstFetch reads the location and work-authorization rules first, so jobs you can't apply for never reach the top of the list.
 
 ```text
-$ python -m worker.cli discover --top 3
-Score  Elig  Title                                             Company                 Source
-----------------------------------------------------------------------------------------------------
-   52  ?     Senior .NET Software Engineer                     OkWhen                  remoteok
-             Title matches target role 'software engineer' · Skills: typescript, aws · Seniority fits (senior) · ...
-   51  ?     Senior Backend Engineer Build AI Agents           Salesforge              remoteok
-             Title matches target role 'backend' · Skills: agents · Seniority fits (senior) · Location not specified
-   47  ?     Senior React Full stack Developer                 Lemon.io                remoteok
-             Target role mentioned in description, not title · Skills: python, llm, agents, node, typescript ...
-----------------------------------------------------------------------------------------------------
-117 fetched · 115 unique · 57 not open to your location · 0 LLM calls (0 tokens)
+$ python -m worker.cli discover --sources sources.example.yaml --top 3
+Rank  Fit  Hire  Elig  Title                                           Company               Source
+--------------------------------------------------------------------------------------------------------------
+  89   80    99  yes   Senior Data Engineer                            (company)             djinni+freehire
+                       fit: Title matches target role 'data engineer' · Skills: python, llm, postgres, scraping, gcp · ...
+                       hire: Open to applicants worldwide · Competition low: 0 applied, 7 views · Posted 41 h ago: early applicant · ...
+  84   75    93  yes   SDET - III (RAGas Automation Testing)           (company)             freehire
+                       fit: Title matches target role 'automation' · Skills: python, llm, scraping, rag, aws, gcp · ...
+                       hire: Open to applicants worldwide · Competition low: 0 applied, 6 views · Posted 2 days ago · Full-time
+  81   77    85  yes   Senior Backend Developer (Python)               (company)             weworkremotely+workingnomads
+                       fit: Title matches target role 'backend' · Skills: python, postgres, docker, aws, gcp · ...
+                       hire: Open to applicants worldwide · Timezone requirement 'CET (+/- 3 hours)' fits UTC+3 · Posted 3 h ago: ...
+--------------------------------------------------------------------------------------------------------------
+per source: remotive 12 (0.4 s), remoteok 89 (1.6 s), himalayas 7 (0.4 s), arbeitnow 4 (1.3 s), greenhouse 659 (6.3 s),
+            lever 10 (2.4 s), freehire 137 (8.3 s), djinni 287 (3.3 s), weworkremotely 95 (4.0 s), jobicy 56 (3.0 s), workingnomads 23 (2.6 s)
+1379 fetched · 1359 unique · 119 eligible · 709 not open to your location · 0 LLM calls (0 tokens)
+runtime 47.1 s
 ```
-<sub>Real output from 2026-10-16 using the rules-only extractor (no API key).</sub>
+<sub>Real output from 2026-10-19 using the rules-only extractor (no API key); company names replaced and URL lines left out here.</sub>
 
 ## How it works
 
 ```text
  sources ──► fetch ──► dedupe ──► rules extract ──► pre-score ──► LLM extract* ──► score ──► Postgres / Notion / webhook
- (6 APIs +   (retry,   (per source   (skills,          (cheap)       (*only jobs      (0-100 with
+ (11 APIs +   (retry,   (per source   (skills,          (cheap)       (*only jobs      (0-100 with
   Playwright) throttle) + across      seniority,                       that pre-score   reasons)
                         boards)       salary, risks)                   ≥ 35)
 ```
 
-- **Sources** (`worker/sources/`): Remotive, RemoteOK, Arbeitnow, Himalayas, any Greenhouse or Lever careers board, plus an opt-in Playwright scraper for sites without an API. All requests go through one HTTP client with throttling, exponential backoff with jitter, and `Retry-After` support.
+- **Sources** (`worker/sources/`): FreeHire, Djinni, We Work Remotely, Jobicy, Working Nomads, Remotive, RemoteOK, Arbeitnow, Himalayas, any Greenhouse or Lever careers board, plus an opt-in Playwright scraper for sites without an API (see [Sources](#sources) for each one's terms and limits). All requests go through one HTTP client with throttling, exponential backoff with jitter, `Retry-After` support, and pacing on `X-RateLimit-Remaining`/`X-RateLimit-Reset` when an API sends them.
 - **Full descriptions** (`worker/sources/fulltext.py`): RemoteOK and Himalayas sometimes return only an excerpt, which under-counts skills. When a new posting from those sources has a description shorter than `FULL_DESCRIPTION_MIN_CHARS` (1500), FirstFetch fetches the posting page and uses the JSON-LD `JobPosting.description` if the page has one, or else the block holding most of the page's text, with navigation, sidebars, footers and link lists left out. Page fetches use the same throttled client, identify as `FirstFetch/…`, check `robots.txt` (cached per host, `Crawl-delay` honored) and stop trying a host after two failures in a row. The API text is kept whenever a fetch fails or the page has less text. Each scrape run has a budget, `FULL_DESCRIPTION_MAX_PAGES` (10) and `FULL_DESCRIPTION_MAX_SECONDS` (20), so the daily serverless run stays well inside its time limit. Each run's stats show `full_descriptions: {candidates, fetched, failed, skipped, ...}`. Set `FULL_DESCRIPTION_MIN_CHARS=0` to turn it off, `FULL_DESCRIPTION_SOURCES` to change which sources are fetched, or `"full_descriptions": true/false` in a source's config to override one source. Use `discover --no-full-descriptions` to skip it from the CLI.
 - **Extraction** (`worker/ai.py`): keyword rules by default. With `OPENAI_API_KEY`, or `LLM_BASE_URL` pointing at any OpenAI-compatible server such as Ollama, a strict JSON schema is sent and the reply is validated with Pydantic. Any failure falls back to rules instead of failing the run. Token usage is recorded per job.
 - **Scoring** (`worker/matching.py`): deterministic, so it's testable and auditable. The LLM supplies facts; it doesn't decide the score.
@@ -47,17 +53,68 @@ Score  Elig  Title                                             Company          
   | Recency | 5 | days since the posting went live, or since its last update when the source reports one (see below) |
   | Risk flags | −10 each | commission-only, unpaid, upfront fees, vague postings |
 
+- **Hire probability** (`worker/hire.py`): a second, separate 0–100 score for *can I realistically get this job?*, with its own reasons. See [Hire probability and rank](#hire-probability-and-rank). Jobs are ranked by `rank`, the geometric mean of fit and hire probability.
+
+- **Cross-source dedupe** (`worker/pipeline.py`): the same job seen on several boards becomes one posting. Two postings are linked when their URLs match after dropping `www.`, trailing slashes and tracking parameters (`utm_*`, `ref`, …), which catches FreeHire's copies of Djinni and We Work Remotely jobs, or when normalized title + company match across different sources, including We Work Remotely's `Company: Title` style that other boards copy into the title. One board listing the same title twice is kept as two openings. The richest record wins (most structured facts, then longest description), its gaps are filled from the others, the longest description is kept, the link-back board's URL stays the job URL, a board that posted the job directly beats an aggregator on location, and every board's URL is kept in `source_urls` (stored in `jobs_raw.meta`).
+
 - **Recency dates**: `posted_at` is always when the posting first went live. Greenhouse also returns `updated_at`, which keeps moving while a role stays open, so a requisition first published months ago isn't scored as stale: recency uses the newer of the two, and the reason says which (`Updated 3 days ago, first posted 251 days ago` vs `Posted 60 days ago`). An update less than a day after publishing counts as the original post. `updated_at` is kept in `jobs_raw.meta` (no column) and refreshed on every scrape, so `POST /api/analyze` rescores stored rows. Lever's public API only has `createdAt`, so Lever recency is the creation date; the other boards report a single publication date.
 
 - **Salary normalization** (`worker/salary.py`): hourly × 2080 (40 h × 52 weeks), daily × 260, weekly × 52, monthly × 12; no period means annual and no currency means USD. Other currencies convert with a dated static table (USD per unit), which `FX_RATES_JSON='{"EUR": 1.1}'` overrides or extends. A currency or period the table doesn't know is scored as unknown, never guessed. Period and currency are read from the source's fields or from text such as `$40/hr`, `€5,000 per month`, `£70k`, `USD 120,000 - 150,000`. The reason shows both figures, e.g. `Salary up to €60,000/yr ≈ $70,200`. Stored `salary_min`/`salary_max` stay in the source's own unit.
 
-- **Dashboard** (`frontend/`): each job card shows the top reasons and an eligibility badge (Eligible / Not open to your location / Eligibility unknown). "Why this score" expands the per-component points as bars, the risk penalty, the ineligible cap and the matched skills, all read from the stored `extracted_json.match`. Jobs not open to your location are hidden by default; the "Show N jobs not open to your location" toggle brings them back.
+- **Dashboard** (`frontend/`): jobs are sorted by rank by default (a selector switches to best fit or newest). Each job card shows the rank, the fit score, the top reasons, an eligibility badge (Eligible / Not open to your location / Eligibility unknown) and a hire-chance badge. "Why this score" expands the per-component points as bars, the risk penalty, the ineligible cap and the matched skills, all read from the stored `extracted_json.match`, then the hire-probability gates, weighted factors and reasons from `extracted_json.hire`. Jobs not open to your location are hidden by default; the "Show N jobs not open to your location" toggle brings them back.
 
 - **Notion** (`worker/notion.py`): upserts keyed by job URL, so re-runs update scores without duplicating pages. The `Status` you set in Notion is never overwritten.
 
 - **Telegram and tracker** (`backend/app/telegram/`, `backend/app/tracker.py`): a daily digest of the best new matches with Applied / Save / Not for me buttons, an owner-only bot, and a per-job application tracker whose 👎/⭐/✅ history nudges similar jobs down or up. See [Telegram alerts](#telegram-alerts).
 
 **Stack:** Python 3.12, FastAPI, SQLAlchemy + Alembic, PostgreSQL (pgvector), Redis + RQ, httpx, Pydantic, Next.js dashboard, Docker Compose, GitHub Actions.
+
+## Sources
+
+| Source (`type`) | Endpoint | Filters FirstFetch sends | Terms and limits |
+|---|---|---|---|
+| FreeHire (`freehire`) | `GET https://freehire.me/api/v1/agent/jobs/search` ([OpenAPI](https://freehire.me/openapi.yaml)) | any search param: `q` (with `title:` and `OR`), `work_mode`, `regions`, `employment_type`, `is_tech`, `posted_within_days`, `sort`, `limit`/`offset`; several `queries` per source, list values sent as repeated params | No key. 300 req/min for agent search, 600/min for other reads; `X-RateLimit-*` on every response and `429` + `Retry-After`. Asks for a User-Agent naming the project. Unknown params are dropped and listed in `meta.ignored_params`: FirstFetch fails the source (`strict: false` logs instead). Optional `company_remote_regions` reads `/companies?remote_regions=` to learn which companies hire remotely in Africa. Each request retries twice with waits capped at 10 s (FreeHire sometimes answers 522 with a long `Retry-After`), and `max_seconds` (45) bounds the whole source. |
+| Djinni (`djinni`) | `https://djinni.co/jobs/rss/` | `primary_keyword`, `exp_level`, `english_level`, `employment` | Public RSS, up to 100 items per query. Other params (`region`, `keywords`, `page`) are silently ignored by the feed, so FirstFetch refuses them. |
+| We Work Remotely (`weworkremotely`) | `https://weworkremotely.com/categories/remote-<category>-jobs.rss` | one feed per `categories` entry (`back-end-programming`, `full-stack-programming`, `devops-sysadmin`, `programming`, …) | Terms ask for a link back: the weworkremotely.com URL stays the job URL. `<country>`, when present, is the real restriction (`<region>` says "Anywhere in the World" even then). |
+| Jobicy (`jobicy`) | `https://jobicy.com/api/v2/remote-jobs` ([docs](https://github.com/Jobicy/remote-jobs-api)) | `count`, `geo` (`anywhere`, `emea`, …), `industry`, `tag` | Automated sync passes at most once per hour (the daily cron is well inside that); credit Jobicy and send applicants to the listing URL. `appliedFilters` is checked: a filter that wasn't applied fails the source. Last 7 days only. |
+| Working Nomads (`workingnomads`) | `https://www.workingnomads.com/api/exposed_jobs/` | none server-side; `categories` and `keywords` filter locally | Latest ~40 listings, no parameters. |
+| Remotive, RemoteOK, Arbeitnow, Himalayas, Greenhouse, Lever | see `worker/sources/adapters.py` | | see [Limitations](#limitations-and-next-steps) |
+
+Every source accepts `max_age_days` (drop older postings) and `max_results`. `sources.example.yaml` has queries tuned for a remote backend/AI engineer in Ethiopia.
+
+## Hire probability and rank
+
+The fit score says whether a job is right for you. Hire probability (`worker/hire.py`) says whether applying is likely to pay off. Each factor is 0–1 and gets a reason:
+
+```text
+hire_probability = 100 × eligibility × timezone × language × (Σ weight × factor / 100)
+rank             = round(100 × √(fit/100 × hire_probability/100))
+```
+
+Gates multiply because any one of them can make an application pointless; the weighted factors average because they trade off.
+
+| Factor | Kind | Value |
+|---|---|---|
+| Eligibility certainty | gate | 1.0 explicitly worldwide / anywhere / global / Africa / your country (location text, or FreeHire `regions`/`countries`); 0.9 EMEA; 0.75 MENA (Ethiopia isn't always counted in it); 0.85 posting silent but FreeHire lists the company as hiring remotely in Africa; 0.9 another of your `eligible_terms`; 0.5 bare "Remote"; 0.02 not open to your location (same verdict as the fit score) |
+| Timezone | gate | stated requirements in the location, timezone note or description ("US time zones only", "CET ±2h", "UTC-3 to UTC+3", "overlap with EST", which adds 4 h of slack) against `timezone`: 1.0 inside the window, 0.75 within 2 h, 0.45 within 4 h, 0.25 within 6 h, else 0.1; 1.0 when nothing is stated |
+| Language | gate | 0.1 if another language is required ("fluent German", "French is a must", "Japanese-speaking"; "… is a plus" doesn't count) and it isn't in `languages`; 0.35 if the posting itself isn't in English (source field, or script/stopword detection); else 1.0 |
+| Competition | weight 30 | pressure = applicants + views/20; factor = 1 / (1 + 4 × pressure / `max_competition`), floor 0.1. With the default 50: 0 → 1.0, 12.5 → 0.5, 25 → 0.33, 50 → 0.2. Unknown (most boards) 0.5 |
+| Freshness | weight 30 | 1.0 for the first 48 h, then halves every 5 days (7 days ≈ 0.5, 12 days ≈ 0.25), floor 0.05; unknown date 0.4. FreeHire postings whose date the source keeps restating (`fake_freshness`) are dated from when FreeHire first saw them |
+| Seniority | weight 20 | 1.0 when the stated (source) or title level is in your `seniority`, 0.55 one level off, 0.25 two, 0.1 further; 0.7 unknown. Halved (or quartered) when the posting asks for more years than `years_experience`, if you set it |
+| Employment type | weight 20 | your `employment_types` weight (default full-time 1.0, contract 0.6); types you don't list 0.1; unknown 0.8. Read from the source, else the title, else a clear phrase like "this is a contract role" |
+
+Profile settings (all optional, defaults suit a remote job search from Ethiopia):
+
+```yaml
+employment_types: {full_time: 1.0, contract: 0.6}
+timezone: UTC+3
+max_competition: 50
+languages: [english, amharic]
+location: {country: Ethiopia, country_code: et}
+# years_experience: 5
+```
+
+The worker stores `extracted_json.hire` (`score`, `factors`, `reasons`), `extracted_json.hire_probability` and `extracted_json.rank` (both 0–100) next to `match`; `score` stays the 0–1 fit score. `GET /api/jobs?sort=rank` orders by rank, then fit. The dashboard's `ScoreDetails` mirrors the weights above.
 
 ## Quick start (no database)
 
@@ -200,7 +257,7 @@ DATABASE_URL=postgresql://... python -m worker.cli repair-text             # app
 
 ```bash
 pip install pytest ruff
-pytest          # 322 tests, offline: adapters run against trimmed real API responses and saved HTML pages; Telegram against a fake Bot API (httpx.MockTransport); migrations on SQLite
+pytest          # 450 tests, offline: adapters run against trimmed real API responses and saved HTML pages; Telegram against a fake Bot API (httpx.MockTransport); migrations on SQLite
 TEST_DATABASE_URL=postgresql://postgres@localhost:5433/scratch pytest   # +2: eligibility filter (drops and recreates the job tables) and the migrations, in a throwaway schema, on a real Postgres
 ruff check worker tests
 ```
@@ -303,7 +360,7 @@ docker compose -f infra/docker-compose.yml up -d --build
 | POST | /api/sources | Create source |
 | POST | /api/sources/{id}/scrape | Enqueue scrape for one source |
 | POST | /api/scrape | Enqueue scrape (all or body `source_id`) |
-| GET | /api/jobs | List jobs (filter: source, min_score, q, eligible, status, page; sort: score or recent) |
+| GET | /api/jobs | List jobs (filter: source, min_score, q, eligible, status, page; sort: rank, score or recent) |
 | GET | /api/jobs/{id} | Job detail |
 | GET | /api/runs | List scrape/analyze/telegram runs |
 | GET | /api/applications | Tracked jobs (filter: status) |
@@ -366,9 +423,13 @@ alerts add `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET` and `TELEGRAM_CHAT_ID
 - Pages are only fetched for postings that aren't stored yet, so rows saved before this feature keep their excerpts.
 - Salary conversion uses fixed assumptions: hourly rates are treated as full-time (2080 h/yr, no unpaid leave), 13th-month pay is ignored, and exchange rates come from a static table dated in `worker/salary.py` (override with `FX_RATES_JSON`). A bare `$` is read as USD, so CAD/AUD listings that write only `$` are slightly over-valued.
 - Salary text without a period marker is taken as annual, so an unlabeled monthly figure ("€5,000") under-scores; currencies outside the table count as unknown.
-- On Vercel each discovery runs inside one function call (up to 300 s) and the Hobby plan allows one cron run per day. Full-description fetching adds at most `FULL_DESCRIPTION_MAX_SECONDS` per source that uses it, plus a few seconds for the last request (40-50 s a day with the defaults). Docker Compose with the RQ worker has neither limit.
+- On Vercel each discovery runs inside one function call (up to 300 s) and the Hobby plan allows one cron run per day. Full-description fetching adds at most `FULL_DESCRIPTION_MAX_SECONDS` per source that uses it, plus a few seconds for the last request (40-50 s a day with the defaults). The five sources added for FreeHire, Djinni, We Work Remotely, Jobicy and Working Nomads took 21 s of fetching together in a measured run (FreeHire 8 s for 3 queries plus 6 company pages), and FreeHire stops itself at `max_seconds` (45) if the API is slow. Docker Compose with the RQ worker has neither limit.
 - The pgvector `embeddings` table exists but isn't used yet. Semantic similarity against a CV is planned as an extra scoring component.
-- Respect each API's terms: Remotive asks for a few requests per day, and RemoteOK and Arbeitnow ask for links back to listings.
+- Respect each API's terms: Remotive asks for a few requests per day, RemoteOK and Arbeitnow ask for links back to listings, and the boards in [Sources](#sources) have their own notes.
+- Hire probability is a ranking index built from stated facts and fixed curves, not a calibrated probability: nobody has measured that 48 hours or 20 views per applicant is right for every board. FreeHire's `applied_count`/`view_count` count only FreeHire's own users, so they under-state real competition; the other boards publish no counts, so their competition factor is a neutral 0.5.
+- Djinni's RSS has no company or location, so Djinni-only jobs are "eligibility unknown" unless the description says who can apply; many Djinni roles are in practice for Ukraine-based candidates. FreeHire's copy of a Djinni job, when it has one, adds the company and region.
+- Cross-source dedupe runs in `discover` (CLI and pipeline). The database path scrapes each source in its own task, so the same job from two sources is stored twice there.
+- Rows analyzed before this release have no `rank` and sort after ranked rows with `sort=rank`; `POST /api/analyze` with no body rescores them.
 
 ## Docs
 

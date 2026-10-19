@@ -35,15 +35,35 @@ logger = logging.getLogger(__name__)
 META_FIELDS = (
     "source", "external_id", "remote", "tags",
     "salary_min", "salary_max", "salary_currency", "salary_text", "salary_period",
+    # hire-probability inputs (worker/hire.py); stored so POST /api/analyze can rescore
+    "employment_type", "seniority", "regions", "countries", "applied_count", "view_count",
+    "timezone_note", "posting_language", "extra", "source_urls",
 )  # fmt: skip
 
 
 def _meta(p: JobPosting) -> dict:
     """Source facts without a jobs_raw column. Datetimes are stored as ISO strings (JSONB)."""
-    meta = {k: v for k, v in asdict(p).items() if k in META_FIELDS}
+    meta = {k: v for k, v in asdict(p).items() if k in META_FIELDS and v not in (None, [], {})}
     if p.updated_at:
         meta["updated_at"] = p.updated_at.isoformat()
     return meta
+
+
+# Facts that change while a posting stays open; refreshed on every scrape so re-analysis sees them.
+VOLATILE_META = ("applied_count", "view_count")
+
+
+def _refresh_meta(existing: JobRaw, p: JobPosting) -> None:
+    """Keep the "updated" date and applicant/view counts of an already stored posting current."""
+    meta = dict(existing.meta or {})
+    if p.updated_at:
+        meta["updated_at"] = p.updated_at.isoformat()
+    for key in VOLATILE_META:
+        value = getattr(p, key)
+        if value is not None:
+            meta[key] = value
+    if meta != (existing.meta or {}):
+        existing.meta = meta
 
 
 def _full_text_options(config: dict) -> FullTextOptions:
@@ -96,6 +116,16 @@ def _to_posting(job: JobRaw) -> JobPosting:
         salary_currency=meta.get("salary_currency"),
         salary_text=meta.get("salary_text"),
         salary_period=meta.get("salary_period"),
+        employment_type=meta.get("employment_type"),
+        seniority=meta.get("seniority"),
+        regions=meta.get("regions") or [],
+        countries=meta.get("countries") or [],
+        applied_count=meta.get("applied_count"),
+        view_count=meta.get("view_count"),
+        timezone_note=meta.get("timezone_note"),
+        posting_language=meta.get("posting_language"),
+        extra=meta.get("extra") or {},
+        source_urls=meta.get("source_urls") or {},
     )
 
 
@@ -129,9 +159,7 @@ def run_scrape_task(source_id: int, params: dict | None = None) -> dict:
                         select(JobRaw).where(JobRaw.source_id == source_id, JobRaw.content_hash == p.content_hash)
                     ).scalar_one_or_none()
                     if existing:
-                        # Keep the "updated" date current so a re-analysis scores recency correctly.
-                        if p.updated_at and (existing.meta or {}).get("updated_at") != p.updated_at.isoformat():
-                            existing.meta = {**(existing.meta or {}), "updated_at": p.updated_at.isoformat()}
+                        _refresh_meta(existing, p)
                         continue
                     new.append(p)
                 # Only new postings: pages of jobs stored on an earlier run aren't fetched again.
@@ -201,7 +229,15 @@ def run_analyze_task(job_ids: list[int]) -> dict:
                 scored = analyze(_to_posting(job), profile, extractor)
                 f, m = scored.extraction.fields, scored.match
                 values = dict(
-                    extracted_json={**f.model_dump(), "match": m.to_dict(), "method": scored.extraction.method},
+                    extracted_json={
+                        **f.model_dump(),
+                        "match": m.to_dict(),
+                        "hire": scored.hire.to_dict(),
+                        # 0-100 each; the tracker and Telegram digest read these two keys
+                        "hire_probability": scored.hire.score,
+                        "rank": scored.rank,  # geometric mean of match.score and hire_probability
+                        "method": scored.extraction.method,
+                    },
                     score=m.score / 100,  # stored 0-1; the dashboard renders it as a percentage
                     seniority=f.seniority,
                     salary_min=scored.posting.salary_min,

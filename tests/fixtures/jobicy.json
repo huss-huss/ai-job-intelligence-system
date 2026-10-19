@@ -1,0 +1,78 @@
+{
+ "apiVersion": "2.2.19",
+ "documentationUrl": "https://jobi.cy/apidocs",
+ "friendlyNotice": "Thanks for using Jobicy API! Please ensure Jobicy is clearly credited with a direct link to the source, and all application buttons redirect to the original job URL provided in this feed. That’s all! You might be building something amazing, we wish you the best of luck!",
+ "jobCount": 3,
+ "lastUpdate": "2026-10-19T02:45:19+00:00",
+ "nextCursor": "AgAAAABq1f3EAAAAAGrSJqcAAAAAAAJfJQLdYReLMIlnNcHnEovfWMhi-qEnddl3ku86rH8wP7EOdDSa1bQxihk9Cs56CE1fb1_ceYtjI_E6hfoBaMYxlLg",
+ "hasMore": true,
+ "appliedFilters": {
+  "count": 50,
+  "tag": "python"
+ },
+ "statusCode": 200,
+ "success": true,
+ "jobs": [
+  {
+   "id": 153597,
+   "url": "https://jobicy.com/jobs/153597-sr-data-engineer-3",
+   "jobSlug": "153597-sr-data-engineer-3",
+   "jobTitle": "Sr. Data Engineer",
+   "companyName": "Carrot",
+   "companyLogo": "https://jobicy.com/data/server-nyc0409/galaxy/mercury/2021/07/005d05de29487ec44cd07bd9d757d4e1.png",
+   "jobIndustry": [
+    "Data Science & Analytics"
+   ],
+   "jobType": [
+    "Full-Time"
+   ],
+   "jobGeo": "USA",
+   "jobLevel": "Director",
+   "jobExcerpt": "About Carrot: Carrot is the leading global fertility and family care platform, built on intelligent care orchestration: the right clinical guidance, at the right moment, in the context of each ...",
+   "jobDescription": "<p><strong>About <a href=\"https://jobicy.com/company/carrot\" target=\"_blank\" rel=\"noopener\">Carrot</a>: </strong></p>\r\n<p><a href=\"https://c212.net/c/link/?t=0&amp;l=en&amp;o=4420559-1&amp;h=3535232987&amp;u=https%3A%2F%2Fwww.carrotfertility.com%2F&amp;a=Carrot+Fertility\" rel=\"nofollow ugc noopener\" target=\"_blank\">Carrot</a> is the leading global fertility and family care platform, built on intelligent care orchestration: the right clinical guidance, at the right moment, in the context of each member’s life. More than a thousand multinational employers, health plans, and health systems trust Carrot to support millions of members across 195 countries – from pre-pregnancy through menopause ...",
+   "pubDate": "2026-10-19T02:45:19+00:00",
+   "salaryMin": 145000,
+   "salaryMax": 165000,
+   "salaryCurrency": "USD",
+   "salaryPeriod": "yearly"
+  },
+  {
+   "id": 146254,
+   "url": "https://jobicy.com/jobs/146254-atlassian-administrator-1726",
+   "jobSlug": "146254-atlassian-administrator-1726",
+   "jobTitle": "Atlassian Administrator 1726",
+   "companyName": "Softgic",
+   "companyLogo": "https://jobicy.com/data/server-nyc0409/galaxy/mercury/2025/06/80b93c85-221.jpeg",
+   "jobIndustry": [
+    "DevOps & Infrastructure"
+   ],
+   "jobType": [
+    "Full-Time"
+   ],
+   "jobGeo": "Anywhere",
+   "jobLevel": "Senior",
+   "jobExcerpt": "This is a remote position. We are seeking an experienced Atlassian Administrator to manage, optimize, and continuously improve our Atlassian Cloud ecosystem. This role will be responsible for the ...",
+   "jobDescription": "<p> This is a remote position. </p>\n<p> We are seeking an experienced <b> Atlassian Administrator </b> to manage, optimize, and continuously improve our Atlassian Cloud ecosystem. This role will be responsible for the administration, configuration, customization, and support of <b> Jira Software, Confluence, and Jira Service Management (JSM) </b> , ensuring these platforms effectively support business processes and operational goals across the organization. </p>\n<p> The ideal candidate combines strong technical expertise with excellent problem-solving and communication skills, and has experience designing scalable solutions, automating workflows, integrating enterprise systems, and ...",
+   "pubDate": "2026-10-18T03:50:32+00:00"
+  },
+  {
+   "id": 149365,
+   "url": "https://jobicy.com/jobs/149365-offensive-security-lead",
+   "jobSlug": "149365-offensive-security-lead",
+   "jobTitle": "Offensive Security Lead",
+   "companyName": "Nebius",
+   "companyLogo": "https://jobicy.com/data/server-nyc0409/galaxy/mercury/2026/06/d90c0566-221.webp",
+   "jobIndustry": [
+    "Cybersecurity"
+   ],
+   "jobType": [
+    "Full-Time"
+   ],
+   "jobGeo": "Europe",
+   "jobLevel": "Senior",
+   "jobExcerpt": "About Nebius: Nebius is leading a new era in cloud infrastructure for the global AI economy. We are building a full-stack AI cloud platform that supports developers and enterprises from data and ...",
+   "jobDescription": "<div><p><strong>About <a href=\"https://jobicy.com/company/nebius\" target=\"_blank\" rel=\"noopener\">Nebius</a>:</strong></p>\n<p>Nebius is leading a new era in cloud infrastructure for the global AI economy. We are building a full-stack AI cloud platform that supports developers and enterprises from data and model training through to production deployment, without the cost and complexity of building large in-house AI/ML infrastructure.</p>\n<p>Built by engineers, for engineers. From large-scale GPU orchestration to inference optimization, we own the hard problems across compute, storage, networking and applied AI.</p>\n<p>Listed on Nasdaq (NBIS) and headquartered in Amsterdam, we have a global ...",
+   "pubDate": "2026-10-19T02:35:28+00:00"
+  }
+ ]
+}

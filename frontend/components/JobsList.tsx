@@ -1,11 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { fetchApplications, fetchJobs, getMatch, updateApplication, type ApplicationStatus, type Job } from "@/lib/api";
+import { fetchApplications, fetchJobs, getHire, getMatch, getRank, updateApplication, type ApplicationStatus, type Job, type JobSort } from "@/lib/api";
 import { formatDate, scoreColor } from "@/lib/utils";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { EligibilityBadge, TopReasons, WhyThisScore } from "@/components/ScoreDetails";
+import { EligibilityBadge, HireBadge, TopReasons, WhyThisScore } from "@/components/ScoreDetails";
 import { StatusBadge, StatusFilterSelect, StatusSelect, statusParam, type StatusFilter } from "@/components/Tracker";
 import { Briefcase, Building2, Eye, EyeOff, MapPin, Loader2 } from "lucide-react";
 
@@ -13,6 +13,7 @@ type Filters = {
   source?: number;
   min_score?: number;
   q?: string;
+  sort?: JobSort;
   page: number;
 };
 
@@ -41,7 +42,13 @@ export function JobsList({ filters, onPageChange, refreshKey = 0 }: JobsListProp
     setLoading(true);
     setError(null);
     Promise.all([
-      fetchJobs({ ...common, page: filters.page, page_size: 20, eligible: showIneligible ? "any" : "true,unknown" }),
+      fetchJobs({
+        ...common,
+        page: filters.page,
+        page_size: 20,
+        sort: filters.sort ?? "rank",
+        eligible: showIneligible ? "any" : "true,unknown",
+      }),
       // Only the total is needed for the toggle label.
       fetchJobs({ ...common, page: 1, page_size: 1, eligible: "false" }).then((r) => r.total, () => null),
       fetchApplications().catch(() => []),
@@ -57,7 +64,7 @@ export function JobsList({ filters, onPageChange, refreshKey = 0 }: JobsListProp
     return () => {
       cancelled = true;
     };
-  }, [filters.source, filters.min_score, filters.q, filters.page, refreshKey, showIneligible, statusFilter]);
+  }, [filters.source, filters.min_score, filters.q, filters.sort, filters.page, refreshKey, showIneligible, statusFilter]);
 
   const changeStatus = async (jobId: number, status: ApplicationStatus) => {
     const previous = statuses[jobId] ?? "new";
@@ -181,6 +188,8 @@ export function JobsList({ filters, onPageChange, refreshKey = 0 }: JobsListProp
 function JobCard({ job, status, onStatus }: { job: Job; status: ApplicationStatus; onStatus: (s: ApplicationStatus) => void }) {
   const score = job.analysis?.score;
   const match = getMatch(job);
+  const hire = getHire(job);
+  const rank = getRank(job);
   return (
     <Card className="transition-all duration-300 hover:border-primary/50 hover:shadow-lg hover:shadow-primary/10 hover:-translate-y-1 border-border/50 group">
       <CardHeader className="pb-3">
@@ -197,8 +206,13 @@ function JobCard({ job, status, onStatus }: { job: Job; status: ApplicationStatu
           </CardTitle>
           <div className="flex items-center gap-2">
             <StatusSelect status={status} onChange={onStatus} />
+            {rank != null && (
+              <div className={`score-badge ${scoreColor(rank / 100)}`} title="Rank: fit and hire chance combined">
+                <span className="font-bold">#{rank}</span>
+              </div>
+            )}
             {score != null && (
-              <div className={`score-badge ${scoreColor(score)}`} title="AI opportunity score">
+              <div className={`score-badge ${scoreColor(score)}`} title="Fit score">
                 <span className="font-bold">{(score * 100).toFixed(0)}%</span>
               </div>
             )}
@@ -221,6 +235,7 @@ function JobCard({ job, status, onStatus }: { job: Job; status: ApplicationStatu
         <div className="flex flex-wrap items-center gap-2 mt-2">
           {job.analysis && <EligibilityBadge match={match} />}
           {status !== "new" && <StatusBadge status={status} />}
+          {hire && <HireBadge hire={hire} />}
           {job.analysis?.seniority && (
             <span className="inline-flex items-center rounded-full bg-primary/10 px-2.5 py-0.5 text-xs font-medium text-primary border border-primary/20">
               {job.analysis.seniority}
@@ -251,7 +266,7 @@ function JobCard({ job, status, onStatus }: { job: Job; status: ApplicationStatu
           {job.description && (
             <p className="line-clamp-2 text-sm text-muted-foreground leading-relaxed">{job.description}</p>
           )}
-          {match && <WhyThisScore match={match} />}
+          {match && <WhyThisScore match={match} hire={hire} rank={rank} />}
         </CardContent>
       )}
     </Card>
