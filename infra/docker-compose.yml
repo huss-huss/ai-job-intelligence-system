@@ -60,6 +60,7 @@ services:
       PROFILE_PATH: ${PROFILE_PATH:-/app/profile.yaml}
       NOTION_TOKEN: ${NOTION_TOKEN:-}
       NOTION_DATABASE_ID: ${NOTION_DATABASE_ID:-}
+      FX_RATES_JSON: ${FX_RATES_JSON:-}
       ALERT_WEBHOOK_URL: ${ALERT_WEBHOOK_URL:-}
     depends_on:
       postgres:
