@@ -7,5 +7,5 @@
     }
   },
   "rewrites": [{ "source": "/(.*)", "destination": "/api/index" }],
-  "crons": [{ "path": "/api/cron/discover", "schedule": "0 6 * * *" }]
+  "crons": [{ "path": "/api/cron/discover", "schedule": "0 4 * * *" }]
 }
