@@ -88,6 +88,23 @@ def location_eligibility(posting: JobPosting, profile: CandidateProfile) -> tupl
     return False, f"Restricted to {posting.location}"
 
 
+def recency_date(posting: JobPosting) -> tuple[datetime | None, bool]:
+    """The date recency is scored from, and whether it is the "updated" date.
+
+    Greenhouse keeps first_published from when a requisition first went live, so a role that is
+    still open looks months old; its updated_at moves while the role is maintained. An update less
+    than a day after posting is the same event and still counts as "posted".
+    """
+    posted, updated = posting.posted_at, posting.updated_at
+    if updated and (posted is None or (updated - posted).days >= 1):
+        return updated, True
+    return posted, False
+
+
+def _days_ago(days: int) -> str:
+    return "today" if days <= 0 else "1 day ago" if days == 1 else f"{days} days ago"
+
+
 def _salary_points(posting: JobPosting, floor_usd: float | None) -> tuple[float, str | None]:
     top = posting.salary_max or posting.salary_min
     if not top:
@@ -167,14 +184,19 @@ def score_job(
     if salary_reason:
         reasons.append(salary_reason)
 
-    # Recency
-    if posting.posted_at:
-        age = ((now or datetime.now(UTC)) - posting.posted_at).days
+    # Recency, from the newer of "posted" and "updated" (see recency_date)
+    seen_at, updated = recency_date(posting)
+    if seen_at:
+        now = now or datetime.now(UTC)
+        age = (now - seen_at).days
         breakdown["recency"] = (
             WEIGHTS["recency"] if age <= 3 else 3 if age <= 14 else 1 if age <= profile.max_age_days else 0
         )
-        if age > profile.max_age_days:
-            reasons.append(f"Posted {age} days ago")
+        if updated:
+            first = f", first posted {_days_ago((now - posting.posted_at).days)}" if posting.posted_at else ""
+            reasons.append(f"Updated {_days_ago(age)}{first}")
+        elif age > profile.max_age_days:
+            reasons.append(f"Posted {_days_ago(age)}")
     else:
         breakdown["recency"] = 1
 

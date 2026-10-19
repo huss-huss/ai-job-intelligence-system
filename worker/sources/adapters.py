@@ -167,7 +167,10 @@ class GreenhouseAdapter:
             company=j.get("company_name"),
             location=location,
             description=html_to_text(j.get("content")),
+            # first_published is when the requisition first went live; updated_at moves while the
+            # role stays open, so recency scoring uses whichever is newer (see score_job).
             posted_at=parse_datetime(j.get("first_published") or j.get("updated_at")),
+            updated_at=parse_datetime(j.get("updated_at")),
             remote=remote,
             tags=[d["name"] for d in j.get("departments") or [] if d.get("name")],
         )
@@ -200,6 +203,7 @@ class LeverAdapter:
             company=company,
             location=cats.get("location"),
             description=j.get("descriptionPlain") or html_to_text(j.get("description")),
+            # Lever's public postings API has no "updated" timestamp, only createdAt.
             posted_at=parse_datetime(j.get("createdAt")),
             remote=(workplace == "remote") if workplace else None,
             tags=[v for v in (cats.get("team"), cats.get("department"), cats.get("commitment")) if v],
