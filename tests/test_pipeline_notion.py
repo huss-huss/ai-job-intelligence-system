@@ -87,8 +87,10 @@ def test_discover_ranks_jobs_and_isolates_failing_sources():
     )
     assert report.fetched == len(remotive["jobs"])
     assert "broken" in report.errors
-    scores = [j.score for j in report.jobs]
-    assert scores == sorted(scores, reverse=True)
+    ranks = [(j.rank, j.score) for j in report.jobs]
+    assert ranks == sorted(ranks, reverse=True)
+    assert report.per_source == {"remotive": len(remotive["jobs"])}
+    assert set(report.source_seconds) == {"remotive", "broken"}
 
 
 # --- notion ----------------------------------------------------------------------

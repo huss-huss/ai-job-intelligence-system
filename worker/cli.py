@@ -15,6 +15,7 @@ import json
 import logging
 import os
 import sys
+import time
 from pathlib import Path
 
 import yaml
@@ -60,19 +61,30 @@ def _sources(args) -> list[dict]:
 
 def _print_table(report: DiscoveryReport, top: int, show_ineligible: bool) -> None:
     rows = [j for j in report.jobs if show_ineligible or j.match.eligible is not False][:top]
-    print(f"\n{'Score':>5}  {'Elig':4}  {'Title':48}  {'Company':22}  Source")
-    print("-" * 100)
+    print(f"\n{'Rank':>4}  {'Fit':>3}  {'Hire':>4}  {'Elig':4}  {'Title':46}  {'Company':20}  Source")
+    print("-" * 110)
     for j in rows:
         elig = {True: "yes", False: "no", None: "?"}[j.match.eligible]
-        company = (j.posting.company or "")[:22]
-        print(f"{j.score:>5}  {elig:4}  {j.posting.title[:48]:48}  {company:22}  {j.posting.source}")
-        print(f"{'':13}{' · '.join(j.match.reasons)[:120]}")
-        print(f"{'':13}{j.posting.url}")
+        company = (j.posting.company or "")[:20]
+        print(
+            f"{j.rank:>4}  {j.score:>3}  {j.hire.score:>4}  {elig:4}  {j.posting.title[:46]:46}  {company:20}"
+            f"  {'+'.join(sorted(j.posting.source_urls)) or j.posting.source}"
+        )
+        print(f"{'':23}fit: {' · '.join(j.match.reasons)[:110]}")
+        print(f"{'':23}hire: {' · '.join(j.hire.reasons)[:110]}")
+        print(f"{'':23}{j.posting.url}")
     hidden = sum(1 for j in report.jobs if j.match.eligible is False)
-    print("-" * 100)
+    eligible = sum(1 for j in report.jobs if j.match.eligible is True)
+    print("-" * 110)
     print(
-        f"{report.fetched} fetched · {len(report.jobs)} unique · {hidden} not open to your location"
-        f" · {report.llm_calls} LLM calls ({report.input_tokens + report.output_tokens} tokens)"
+        "per source: "
+        + ", ".join(
+            f"{name} {report.per_source.get(name, 0)} ({secs:.1f} s)" for name, secs in report.source_seconds.items()
+        )
+    )
+    print(
+        f"{report.fetched} fetched · {len(report.jobs)} unique · {eligible} eligible · {hidden} not open to your"
+        f" location · {report.llm_calls} LLM calls ({report.input_tokens + report.output_tokens} tokens)"
     )
     full = report.full_descriptions
     if full.candidates:
@@ -88,8 +100,10 @@ def cmd_discover(args) -> int:
     profile = _profile(args.profile)
     extractor = build_extractor(settings.openai_api_key, settings.openai_model, settings.llm_base_url)
     full_text = None if args.no_full_descriptions else FullTextOptions.from_settings(settings)
+    started = time.monotonic()
     report = discover(_sources(args), profile, extractor, full_text=full_text)
     _print_table(report, args.top, args.show_ineligible)
+    print(f"runtime {time.monotonic() - started:.1f} s")
 
     if args.json:
         Path(args.json).write_text(
@@ -103,7 +117,10 @@ def cmd_discover(args) -> int:
                         "location": j.posting.location,
                         "posted_at": j.posting.posted_at.isoformat() if j.posting.posted_at else None,
                         "updated_at": j.posting.updated_at.isoformat() if j.posting.updated_at else None,
+                        "source_urls": j.posting.source_urls,
                         **j.match.to_dict(),
+                        "hire": j.hire.to_dict(),
+                        "rank": j.rank,
                     }
                     for j in report.jobs
                 ],
