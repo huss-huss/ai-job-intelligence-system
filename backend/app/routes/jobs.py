@@ -54,6 +54,11 @@ def status_filter(wanted: set[str]) -> ColumnElement[bool]:
     return or_(*conditions)
 
 
+def rank_column() -> ColumnElement[float]:
+    """extracted_json.rank (0-100, see worker/hire.py rank_score) as a number."""
+    return JobAnalysis.extracted_json["rank"].as_float()
+
+
 @router.get("", response_model=Paginated[JobOut])
 async def list_jobs(
     db: AsyncSession = Depends(get_db),
@@ -62,7 +67,12 @@ async def list_jobs(
     q: str | None = Query(None, description="Search in title/company"),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
-    sort: str = Query("score", pattern="^(score|recent)$", description="score: best match first; recent: newest"),
+    sort: str = Query(
+        "score",
+        pattern="^(rank|score|recent)$",
+        description="rank: fit and hire probability combined (extracted_json.rank); score: best fit first; "
+        "recent: newest",
+    ),
     eligible: str = Query(
         "any",
         description="Location eligibility: 'any' (default), or a comma-separated subset of "
@@ -108,7 +118,12 @@ async def list_jobs(
         count_stmt = count_stmt.where(condition)
 
     total = (await db.execute(count_stmt)).scalar() or 0
-    if sort == "score":
+    if sort == "rank":
+        # Rows analyzed before hire probability existed have no rank; they sort last until re-analyzed.
+        base = base.outerjoin(JobAnalysis, JobAnalysis.job_id == JobRaw.id).order_by(
+            rank_column().desc().nulls_last(), JobAnalysis.score.desc().nulls_last(), JobRaw.created_at.desc()
+        )
+    elif sort == "score":
         base = base.outerjoin(JobAnalysis, JobAnalysis.job_id == JobRaw.id).order_by(
             JobAnalysis.score.desc().nulls_last(), JobRaw.created_at.desc()
         )

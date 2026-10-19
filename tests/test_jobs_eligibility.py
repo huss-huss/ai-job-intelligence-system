@@ -164,3 +164,17 @@ def test_eligible_filter_against_postgres():
     finally:
         main.app.dependency_overrides.clear()
         Base.metadata.drop_all(sync_engine, tables=tables)
+
+
+def test_sort_rank_orders_by_stored_rank_then_score(recording_client):
+    client, session = recording_client
+    assert client.get("/api/jobs", params={"sort": "rank"}).status_code == 200
+    page_sql = _sql(session.statements[-1])
+    order = page_sql.split("ORDER BY", 1)[1]
+    assert "CAST(jobs_analysis.extracted_json ->> 'rank' AS FLOAT) DESC NULLS LAST" in order
+    assert order.index("rank") < order.index("jobs_analysis.score DESC")
+
+
+def test_unknown_sort_is_422(recording_client):
+    client, _ = recording_client
+    assert client.get("/api/jobs", params={"sort": "hire"}).status_code == 422
