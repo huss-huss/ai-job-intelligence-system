@@ -306,6 +306,7 @@ def cmd_set_resume(args) -> int:
     except (OSError, ResumeError) as exc:
         print(f"Can't use {path}: {exc}", file=sys.stderr)
         return 1
+    _backend_on_path()
     from app import users
 
     with Session(_engine(url)) as session:
