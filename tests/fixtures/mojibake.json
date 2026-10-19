@@ -1,0 +1,26 @@
+{
+ "_comment": "Real samples captured 2026-10-19. 'stored' = jobs_raw.description as served by the API; 'upstream' = RemoteOK API description HTML (Latin-1 mojibake: UTF-8 bytes shown as U+0080-U+009F controls).",
+ "stored": {
+  "company": "Wrapbook",
+  "title": "Senior Software Engineer II Applied AI",
+  "description": "About Us:\n\nWrapbook is the AI platform for production finance. We\u00e2\u0080\u0099re building a system of action that puts finance teams in control of their whole production, from payroll, to spend, to accounting.\n\nBuilt for feature films, TV, and commercials, Wrapbook is trusted by teams at Netflix, Paramount, Anonymous Content, and more. With backing from Andreessen Horowitz, Bessemer Venture Partners, and Jeffrey Katzenberg's WndrCo, our team of 350+ is using AI to transform how finance teams work and empower them to do more with less.\n\nThe Opportunity: Senior Software Engineer II, Applied AI (Remote - USA / Canada)\n\nWe are looking for a Senior Software Engineer II, Applied AI to join our Agentic Systems team, where you'll build AI agents that automate workflows for teams across Wrapbook. You'll partner directly with internal teams like Marketing, Sales, Support, Operations and Finance to find high-leverage processes, then design, ship and iterate on agents that take real work off their plates. This is a chance to define how a 400+ person company runs on AI. You'll see the impact of your work every day, while shaping the patterns, tools and standards for how we build agents at Wrapbook.\n\nWhat You\u00e2\u0080\u0099ll Do:\n\n-\nDesign and build production-grade AI agents with LangGraph that automate multi-step workflows for internal teams across Wrapbook\n\n-\nDeploy, run and scale agents on Amazon Bedrock "
+ },
+ "upstream": [
+  {
+   "company": "Wrapbook",
+   "description": "<p style=\"min-height:1.5em\"><strong>About Us:</strong></p><p style=\"min-height:1.5em\">Wrapbook is the AI platform for production finance. We\u00e2\u0080\u0099re building a system of action that puts finance teams in control of their whole production, from payroll, to spend, to accounting. </p><p style=\"min-height:1.5em\">Built for feature films, TV, and commercials, Wrapbook is trusted by teams at Netflix, Paramount, Anonymous Content, and more. With backing from Andreessen Horowitz, Bessemer Venture Partners, and Jeffrey Katzenberg's WndrCo, our team of 350+ is using AI to transform how finance teams work an"
+  },
+  {
+   "company": "Allego",
+   "description": "Allego is a rapidly growing SaaS technology company in the Boston area and creator of the market-leading Revenue Enablement Platform. Our technology helps Go-To-Market teams build the skills and access the knowledge they need to succeed in every selling situation.\nAllego is the only revenue enablement platform to be named a Leader in both the Forrester Wave\u00e2\u0084\u00a2 and the inaugural Gartner\u00c2\u00ae Magic Quadrant\u00e2\u0084\u00a2 for Revenue Enablement Platforms.\nNot only are we growing quickly, but we\u00e2\u0080\u0099ve also been recognized as a top place to work by The Boston Business Journal, The Boston Globe, and Inc. Magazine."
+  },
+  {
+   "company": "Kodland",
+   "description": "<p><strong>About\u00c2\u00a0the\u00c2\u00a0Company:</strong></p><p><strong>Kodland\u00c2\u00a0</strong>is\u00c2\u00a0an\u00c2\u00a0international\u00c2\u00a0online\u00c2\u00a0coding\u00c2\u00a0and\u00c2\u00a0digital\u00c2\u00a0skills\u00c2\u00a0school\u00c2\u00a0that\u00c2\u00a0helps\u00c2\u00a0children\u00c2\u00a0aged\u00c2\u00a05\u00c2\u00a0to\u00c2\u00a017\u00c2\u00a0take\u00c2\u00a0their\u00c2\u00a0first\u00c2\u00a0steps\u00c2\u00a0into\u00c2\u00a0the\u00c2\u00a0world\u00c2\u00a0of\u00c2\u00a0programming\u00c2\u00a0and\u00c2\u00a0technology.</p><p style=\"min-height: 1.7em;\"></p><p><strong>About\u00c2\u00a0the\u00c2\u00a0Role:</strong></p><p>Are\u00c2\u00a0you\u00c2\u00a0a\u00c2\u00a0passionate\u00c2\u00a0programmer\u00c2\u00a0who\u00c2\u00a0loves\u00c2\u00a0coding\u00c2\u00a0and\u00c2\u00a0computer\u00c2\u00a0games?\u00c2\u00a0Would\u00c2\u00a0you\u00c2\u00a0like\u00c2\u00a0to\u00c2\u00a0help\u00c2\u00a0children\u00c2\u00a0create\u00c2\u00a0their\u00c2\u00a0first\u00c2\u00a0projects\u00c2\u00a0and\u00c2\u00a0take\u00c2\u00a0their\u00c2\u00a0first\u00c2\u00a0steps\u00c2\u00a0into\u00c2\u00a0the\u00c2\u00a0programming\u00c2\u00a0world\u00c2\u00a0by\u00c2\u00a0teaching\u00c2\u00a0them\u00c2\u00a0Python?\u00c2\u00a0If\u00c2\u00a0so,\u00c2\u00a0this\u00c2\u00a0o"
+  },
+  {
+   "company": "Packmatic GmbH",
+   "description": "<p>\n</p><p><strong><em>Packmatic</em></strong><em> is the leading digital platform for packaging procurement. We connect companies with a Europe-wide network of packaging suppliers \u00e2\u0080\u0093 fast, transparent and data-driven.</em></p>\n<p><em>With <strong>Packa</strong>, we have built a new all-in-one solution for intelligent packaging management: companies run their packaging 100% digitally, cut packaging costs and meet sustainability requirements such as PPWR or EUDR without the usual headache.</em></p>\n<p><em>Together, we are changing how packaging is designed, sourced and managed \u00e2\u0080\u0093 for more eff"
+  }
+ ]
+}

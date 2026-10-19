@@ -71,11 +71,22 @@ python -m worker.cli discover --sources sources.example.yaml --json results.json
 3. `python -m worker.cli notion-setup` adds the properties FirstFetch writes.
 4. `python -m worker.cli discover --notion` syncs eligible jobs at or above `notify_threshold`.
 
+### Repairing stored text
+
+Sources sometimes ship UTF-8 that was decoded as Latin-1/cp1252 (`Weâ€™re`). Adapters repair it on
+ingest, but rows stored earlier keep the garbled text because re-analysis never rewrites `jobs_raw`.
+`repair-text` fixes `title`, `company`, and `description` in place; it is idempotent.
+
+```bash
+DATABASE_URL=postgresql://... python -m worker.cli repair-text --dry-run   # show what would change
+DATABASE_URL=postgresql://... python -m worker.cli repair-text             # apply
+```
+
 ## Tests
 
 ```bash
 pip install pytest ruff
-pytest          # 160 tests, offline: adapters run against trimmed real API responses
+pytest          # 191 tests, offline: adapters run against trimmed real API responses
 TEST_DATABASE_URL=postgresql://postgres@localhost:5433/scratch pytest   # +1: eligibility filter on a real Postgres (drops and recreates the job tables)
 ruff check worker tests
 ```
