@@ -171,11 +171,20 @@ limit of 5 cover letters…", or "This month's AI budget is used up…"); a refu
 facts, logs a warning and is counted under `llm_fallbacks` in the run stats.
 
 **Which jobs get extraction.** Every job is scored by rules first. Once a day, after all sources are scraped (the
-same cron request), `run_llm_enrich_task` takes the jobs of the last 36 hours that only have rules facts, sorts them by
-rules rank, and sends the top N, where N is what's left of today's extraction cap; jobs with a zero fit (excluded
-titles) never go. Four calls run at once (`LLM_CONCURRENCY`), none starts after `LLM_ENRICH_MAX_SECONDS` (75), and each
-enriched job is rescored for the public profile and every user. A job whose call failed or returned invalid output
-isn't tried again. The run is a `llm_enrich` row in run history with tokens, cost, fallbacks and month-to-date spend.
+same cron request), `run_llm_enrich_task` takes the jobs of the last 36 hours that only have rules facts and sends N of
+them, where N is what's left of today's extraction cap. The N are shared fairly by the active users (a valid profile,
+digest not paused): each user's open jobs are ranked by *their own* rules rank (`user_job_scores`, filled in first for
+anyone missing rows), and the users take turns (`fair_select` in `worker/pipeline.py`), each adding their best job not
+picked yet. With two users each list contributes N/2; a job at the top of both lists is extracted once and the next
+turn moves on, and the user who goes first rotates daily so neither always gets the odd extra. Jobs with a zero fit for
+that user (excluded titles) aren't on their list. With no active user it's the public top N, as before. The number of
+calls is the same N whatever the number of users, and every call still goes through the same daily cap and monthly
+guard, so cost doesn't grow with users. Four calls run at once (`LLM_CONCURRENCY`), none starts after
+`LLM_ENRICH_MAX_SECONDS` (75), and since the facts belong to the job, each enriched job is rescored for the public
+profile and every user, whoever's list picked it. A job whose call failed or returned invalid output isn't tried
+again. The run is a `llm_enrich` row in run history with tokens, cost, fallbacks, month-to-date spend and
+`selected_by_user` / `enriched_by_user` (extractions per user id; only the owner sees that split in `GET /api/runs`)
+plus `shared_skipped` (turns that skipped a job another list had already picked).
 `python -m worker.cli llm-enrich` runs the same step by hand; `discover` from the CLI does the same top-N selection,
 with its ledger in the database when `DATABASE_URL` is set and otherwise in `LLM_USAGE_FILE`.
 
@@ -188,7 +197,7 @@ today's extraction and cover-letter counts for everyone; a member sees only thei
 | `OPENAI_MODEL` | `gpt-6-luna` | |
 | `LLM_FALLBACK_MODEL` | `gpt-4.1-mini` | used only when `OPENAI_MODEL` isn't available on the key; empty turns it off |
 | `LLM_MONTHLY_BUDGET_USD` | `0.80` | hard local cap per UTC month, under the $1 limit set on the OpenAI account |
-| `LLM_MAX_EXTRACTIONS_PER_DAY` | `30` | all users together; also the N in "top N jobs a day" |
+| `LLM_MAX_EXTRACTIONS_PER_DAY` | `30` | all users together; also the N in "top N jobs a day", shared by the active users |
 | `LLM_MAX_COVER_LETTERS_PER_DAY` | `5` | per user |
 | `LLM_REASONING_EFFORT` | | override the model's default (`low` for `gpt-6-luna`), e.g. `minimal` |
 | `LLM_PRICES_JSON` | | extra or corrected prices |
@@ -377,7 +386,8 @@ cheap. The throttle table stores a hash of the chat id, not the id. At most 20 m
 - `GET /api/applications` and `GET /api/me` answer 401 without a token; `GET /api/talent-networks` returns the
   platform list without anyone's progress; `GET /api/jobs?status=` needs a token (the filter would reveal what
   someone applied to), and job payloads never carry tracker fields; telegram runs in `GET /api/runs` show the
-  public only totals. Tests seed every kind of private data for two users and call every GET route
+  public only totals, and LLM enrichment runs show the per-user extraction counts only to the owner. A token
+  scores `GET /api/jobs` for its own user and nobody else (`tests/test_user_scores_api.py`). Tests seed every kind of private data for two users and call every GET route
   (`tests/test_privacy.py`); a new GET route fails that test until it's reviewed.
 - Tokens: `X-Admin-Token: <ADMIN_TOKEN>` is the owner. `X-User-Token` is a personal dashboard token from
   `/dashboard`: 32 random bytes, stored as SHA-256, shown once, replaced by the next `/dashboard`, revoked by
@@ -410,8 +420,21 @@ job for every user right after the public score and stores it in `user_job_score
 multi-row insert per batch, so a second user adds no per-job database round trips. A profile edit rescores
 that user's last 30 days; jobs without a row for someone (stored before they joined) are scored the first
 time their digest or `/top` needs them. The owner's profile is the deployment's (`PROFILE_YAML` /
-`PROFILE_PATH` / `profile.example.yaml`) until they edit it in the bot; the choice of which jobs get LLM
-extraction still uses the deployment profile's rank.
+`PROFILE_PATH` / `profile.example.yaml`) until they edit it in the bot. The dashboard's private view and the
+choice of which jobs get LLM extraction use each user's own scores too (see below and
+[AI features and budget](#ai-features-and-budget)).
+
+**Your scores on the dashboard.** With a token, `GET /api/jobs` (and `/api/jobs/{id}`) returns the viewer's
+own score in the same response shape, so the dashboard needs no second request: `analysis.score` (0–1),
+`analysis.skills` and `extracted_json.match`, `.hire`, `.hire_probability` and `.rank` come from that user's
+`user_job_scores` row, and `extracted_json.score_scope` is `"user"`. `sort=rank` / `sort=score`, `min_score` and
+`eligible` use the same values. A job the viewer has no row for (stored before they joined and older than the
+30-day catch-up) keeps the public score, marked `score_scope: "public"`, and sorts after their scored jobs.
+Without a token nothing changes: the public score and no `score_scope`. The private view says
+"Ranked for <name>" above the list. The join is a `LEFT JOIN user_job_scores ON (user_id, job_id)`, the table's
+primary key, so the request is still three SQL statements (count, page, analyses).
+
+![A member's private view, ranked by their own (designer) profile: "Ranked for Alem", their fit, rank and reasons](docs/screenshots/private-ranked-for-member.png)
 
 Measured on a local Postgres 17 with 1316 synthetic jobs (~4 KB descriptions, rules extractor):
 
@@ -425,6 +448,20 @@ Measured on a local Postgres 17 with 1316 synthetic jobs (~4 KB descriptions, ru
 
 The daily cron analyzes only new jobs, so a second user adds well under a second of scoring plus their
 digest's 2-6 Telegram messages to a run that took 39 s in production.
+
+The per-user dashboard and the fair LLM selection, measured the same way (1316 jobs, a second user with a
+different profile, fake chat-completions API with no latency, so the numbers are FirstFetch's own overhead):
+
+| Step | before (owner's rank only) | now, 2 users |
+|---|---|---|
+| choosing the 30 jobs for extraction | 12 ms, 1 query | 16-18 ms, 5 queries (each user's catch-up check, open jobs, both users' ranks) |
+| the whole `llm_enrich` run (30 calls) | 0.17 s, 219 SQL statements | 0.17-0.19 s, 224 SQL statements |
+| LLM calls and cost | 30, $0.0060 | 30 (15 from each list), $0.0060 |
+| `GET /api/jobs?sort=rank&eligible=true,unknown` (median of 20) | 9.7-10 ms public | 11-12 ms with a token (includes the token lookup) |
+
+The page query with a token runs in about 1 ms on Postgres (`EXPLAIN ANALYZE`; at this size the planner hashes
+the 1316 score rows, and `tests/test_user_scores_api.py` checks it can use the primary key instead). The cron run
+gains a few milliseconds; the calls themselves are the same 30.
 
 
 ### Application tracker
@@ -485,8 +522,8 @@ DATABASE_URL=postgresql://... python -m worker.cli repair-text             # app
 
 ```bash
 pip install pytest ruff
-pytest          # 583 tests (+4 skipped without Postgres), offline: adapters run against trimmed real API responses and saved HTML pages; Telegram against a fake Bot API and OpenAI against a fake chat-completions API (both httpx.MockTransport, the real openai SDK); migrations on SQLite
-TEST_DATABASE_URL=postgresql://postgres@localhost:5433/scratch pytest   # +4: eligibility filter (drops and recreates the job tables), the migrations (schema, multi-user data migration, LLM budget) and the budget guard's advisory lock, in a throwaway schema, on a real Postgres
+pytest          # 600 tests (+5 skipped without Postgres), offline: adapters run against trimmed real API responses and saved HTML pages; Telegram against a fake Bot API and OpenAI against a fake chat-completions API (both httpx.MockTransport, the real openai SDK); migrations on SQLite
+TEST_DATABASE_URL=postgresql://postgres@localhost:5433/scratch pytest   # +5: eligibility filter (drops and recreates the job tables), the private jobs query (index, statement count, per-user eligibility), the migrations (schema, multi-user data migration, LLM budget) and the budget guard's advisory lock, in a throwaway schema, on a real Postgres
 ruff check worker tests
 ```
 
@@ -588,7 +625,7 @@ docker compose -f infra/docker-compose.yml up -d --build
 | POST | /api/sources | Create source |
 | POST | /api/sources/{id}/scrape | Enqueue scrape for one source |
 | POST | /api/scrape | Enqueue scrape (all or body `source_id`) |
-| GET | /api/jobs | List jobs (filter: source, min_score, q, eligible, status, page; sort: rank, score or recent) |
+| GET | /api/jobs | List jobs (filter: source, min_score, q, eligible, status, page; sort: rank, score or recent). With a token: scored, sorted and filtered for that user |
 | GET | /api/jobs/{id} | Job detail |
 | GET | /api/runs | List scrape/analyze/telegram runs |
 | GET | /api/applications | Tracked jobs (filter: status). **Private**: token required |
@@ -684,9 +721,8 @@ Set the $1 monthly limit on the OpenAI project too; the local guard stops at $0.
 
 ## Limitations and next steps
 
-- The dashboard always shows the public score; each user's own scores drive their Telegram digest, `/top`
-  and `/today`, but aren't on the dashboard yet. Which jobs get an LLM extraction is decided by the deployment
-  profile's rank, not each member's.
+- Jobs older than 30 days that were stored before a member joined have no score row for them; their private
+  view shows the public score for those (marked "public score") and sorts them last.
 - The token estimate before a call is a character count (3 characters per token), not a tokenizer, so it
   over-reserves; the recorded cost is the API's own usage. Prices are a static table: when OpenAI changes them,
   update `MODEL_PRICES` or set `LLM_PRICES_JSON`.
