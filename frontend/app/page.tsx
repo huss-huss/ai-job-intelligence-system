@@ -5,7 +5,7 @@ import { fetchSources, triggerScrape, triggerAnalyze, fetchRuns, createTestJobs,
 import { JobsList } from "@/components/JobsList";
 import { RunsList } from "@/components/RunsList";
 import { TalentNetworks } from "@/components/TalentNetworks";
-import { AdminTokenField } from "@/components/Tracker";
+import { ViewerControl } from "@/components/Tracker";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Play, Search, Briefcase, Loader2, Trash2, RefreshCw } from "lucide-react";
@@ -277,7 +277,7 @@ export default function DashboardPage() {
               <p className="text-xs text-muted-foreground">Smart Job Discovery Platform</p>
             </div>
           </div>
-          <AdminTokenField />
+          <ViewerControl />
         </div>
       </header>
 

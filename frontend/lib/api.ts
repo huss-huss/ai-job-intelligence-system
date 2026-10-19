@@ -271,10 +271,48 @@ export function setAdminToken(token: string): void {
   window.dispatchEvent(new Event(AUTH_EVENT));
 }
 
+const USER_TOKEN_KEY = "firstfetch.userToken";
+
+/** A personal dashboard token from the bot's /dashboard link. Kept in this browser only. */
+export function getUserToken(): string {
+  if (typeof window === "undefined") return "";
+  return window.localStorage.getItem(USER_TOKEN_KEY) ?? "";
+}
+
+export function setUserToken(token: string): void {
+  if (token) window.localStorage.setItem(USER_TOKEN_KEY, token);
+  else window.localStorage.removeItem(USER_TOKEN_KEY);
+  window.dispatchEvent(new Event(AUTH_EVENT));
+}
+
+/**
+ * The /dashboard link is https://<dashboard>/#token=<token>. A fragment never reaches a server or its
+ * logs; it's moved to localStorage and removed from the address bar right away.
+ */
+export function captureTokenFromUrl(): void {
+  if (typeof window === "undefined") return;
+  const match = window.location.hash.match(/^#token=([A-Za-z0-9_-]{16,128})$/);
+  if (!match) return;
+  setUserToken(match[1]);
+  window.history.replaceState(null, "", window.location.pathname + window.location.search);
+}
+
 /** Headers that identify the viewer; empty for the public. */
 export function authHeaders(): Record<string, string> {
   const admin = getAdminToken();
-  return admin ? { "X-Admin-Token": admin } : {};
+  if (admin) return { "X-Admin-Token": admin };
+  const user = getUserToken();
+  return user ? { "X-User-Token": user } : {};
+}
+
+export type Me = { role: "owner" | "member"; display_name: string };
+
+/** Whose private view this is, or null for the public view. */
+export async function fetchMe(): Promise<Me | null> {
+  if (!hasViewerToken()) return null;
+  const res = await fetch(`${API_BASE}/api/me`, { headers: authHeaders() });
+  if (!res.ok) return null;
+  return res.json();
 }
 
 export function hasViewerToken(): boolean {
