@@ -14,7 +14,8 @@ from app.models import *  # noqa: F401, F403 - register all models
 
 config = context.config
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # Keep loggers configured before the migration (the app's, pytest's caplog) working.
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 config.set_main_option(
     "sqlalchemy.url", sync_database_url(settings.database_url).render_as_string(hide_password=False).replace("%", "%%")

@@ -199,3 +199,22 @@ def callback_update(data: str, chat_id: str = OWNER, message_id: int = 77) -> di
             "message": {"message_id": message_id, "chat": {"id": int(chat_id), "type": "private"}},
         },
     }
+
+
+class AsyncSessionAdapter:
+    """Enough of AsyncSession for the async routes (jobs, runs, sources) to run on a sync SQLite session."""
+
+    def __init__(self, session: Session) -> None:
+        self.session = session
+
+    async def execute(self, stmt, *args, **kwargs):
+        return self.session.execute(stmt, *args, **kwargs)
+
+    async def commit(self) -> None:
+        self.session.commit()
+
+    async def rollback(self) -> None:
+        self.session.rollback()
+
+    async def close(self) -> None:
+        pass

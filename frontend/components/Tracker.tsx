@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { APPLICATION_STATUSES, getAdminToken, setAdminToken, type ApplicationStatus } from "@/lib/api";
+import { APPLICATION_STATUSES, AUTH_EVENT, getAdminToken, setAdminToken, type ApplicationStatus } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { KeyRound } from "lucide-react";
 
@@ -14,6 +14,21 @@ export const STATUS_META: Record<ApplicationStatus, { label: string; cls: string
   rejected: { label: "Rejected", cls: "bg-red-500/15 text-red-300 border-red-500/30" },
   not_interested: { label: "Not for me", cls: "bg-zinc-500/15 text-zinc-400 border-zinc-500/30" },
 };
+
+/** A counter that changes whenever the stored token does, for effects that load private data. */
+export function useAuthKey(): number {
+  const [key, setKey] = useState(0);
+  useEffect(() => {
+    const bump = () => setKey((k) => k + 1);
+    window.addEventListener(AUTH_EVENT, bump);
+    window.addEventListener("storage", bump);
+    return () => {
+      window.removeEventListener(AUTH_EVENT, bump);
+      window.removeEventListener("storage", bump);
+    };
+  }, []);
+  return key;
+}
 
 /** Dashboard filter values; "active" hides jobs you marked not for you. */
 export type StatusFilter = "active" | "all" | ApplicationStatus;
@@ -97,7 +112,7 @@ export function AdminTokenField() {
       <input
         type="password"
         autoComplete="off"
-        placeholder="Admin token (for edits)"
+        placeholder="Admin token (private view)"
         aria-label="Admin token"
         className="w-44 rounded-md border border-border/50 bg-secondary/50 px-2 py-1 text-xs placeholder:text-muted-foreground/60 focus:border-primary focus:outline-none"
         value={value}

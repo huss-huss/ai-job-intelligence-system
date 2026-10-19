@@ -363,10 +363,10 @@ docker compose -f infra/docker-compose.yml up -d --build
 | GET | /api/jobs | List jobs (filter: source, min_score, q, eligible, status, page; sort: rank, score or recent) |
 | GET | /api/jobs/{id} | Job detail |
 | GET | /api/runs | List scrape/analyze/telegram runs |
-| GET | /api/applications | Tracked jobs (filter: status) |
-| PATCH | /api/applications/{job_id} | Set status and/or notes |
-| GET | /api/talent-networks | Talent networks with your status |
-| PATCH | /api/talent-networks/{slug} | Set your status for one network |
+| GET | /api/applications | Tracked jobs (filter: status). **Private**: token required |
+| PATCH | /api/applications/{job_id} | Set status and/or notes (token required) |
+| GET | /api/talent-networks | Talent-network catalog; your status only with a token |
+| PATCH | /api/talent-networks/{slug} | Set your status for one network (token required) |
 | POST | /api/telegram/webhook | Telegram updates (secret header required) |
 
 `eligible` filters on the stored location eligibility: `any` (default), or a comma-separated subset of `true`, `false`, `unknown`. Jobs whose posting doesn't say who can apply, or that aren't analyzed yet, count as `unknown`. The dashboard requests `eligible=true,unknown` and reads the size of the hidden set from `eligible=false&page_size=1`.
@@ -413,7 +413,9 @@ vercel deploy --prod
 cd frontend && vercel link --project firstfetch && vercel deploy --prod
 ```
 
-Writes against a deployment with `ADMIN_TOKEN` need the header `X-Admin-Token: <token>`. For Telegram
+Writes against a deployment with `ADMIN_TOKEN` need the header `X-Admin-Token: <token>`. Tracker statuses,
+notes and talent-network progress are private everywhere: they're only returned with a token, and with no
+`ADMIN_TOKEN` configured they aren't readable over HTTP at all. For Telegram
 alerts add `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET` and `TELEGRAM_CHAT_ID` (see
 [Telegram alerts](#telegram-alerts)), and run `alembic upgrade head` once for the tracker tables.
 

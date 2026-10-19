@@ -5,6 +5,7 @@ from sqlalchemy import ColumnElement, delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.auth import Viewer, optional_viewer
 from app.database import get_db
 from app.models import Application, JobAnalysis, JobRaw
 from app.routes.applications import parse_statuses
@@ -81,10 +82,15 @@ async def list_jobs(
     status: str | None = Query(
         None,
         description="Tracker status: comma-separated subset of new, saved, applied, interviewing, offer, "
-        "rejected, not_interested ('new' includes untracked jobs)",
+        "rejected, not_interested ('new' includes untracked jobs). Private: needs a token",
     ),
+    viewer: Viewer | None = Depends(optional_viewer),
 ) -> Paginated[JobOut]:
-    """List jobs with optional filters and pagination."""
+    """List jobs with optional filters and pagination. Never includes tracker data."""
+    statuses = parse_statuses(status)
+    if statuses is not None and viewer is None:
+        # Filtering by status would reveal which jobs someone applied to.
+        raise HTTPException(status_code=401, detail="The status filter is private: send X-Admin-Token")
     wanted = parse_eligible(eligible)
     base = select(JobRaw).options(selectinload(JobRaw.analysis))
     count_stmt = select(func.count()).select_from(JobRaw)
@@ -111,7 +117,6 @@ async def list_jobs(
         base = base.where(condition)
         count_stmt = count_stmt.where(condition)
 
-    statuses = parse_statuses(status)
     if statuses is not None:
         condition = status_filter(statuses)
         base = base.where(condition)

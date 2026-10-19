@@ -1,4 +1,4 @@
-"""Application tracker API. Writes go through the ADMIN_TOKEN middleware like every other write."""
+"""Application tracker API. Private: every endpoint needs a token (see app/auth.py)."""
 
 from datetime import datetime
 
@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app import tracker
+from app.auth import Viewer, require_viewer
 from app.db_sync import get_sync_db
 
 router = APIRouter(prefix="/api/applications", tags=["applications"])
@@ -71,12 +72,18 @@ def parse_statuses(value: str | None) -> set[str] | None:
 def list_applications(
     status: str | None = Query(None, description="Comma-separated statuses, e.g. 'saved,applied' (default: all)"),
     session: Session = Depends(get_sync_db),
+    viewer: Viewer = Depends(require_viewer),
 ) -> list[ApplicationOut]:
     return [_out(*row) for row in tracker.tracked(session, parse_statuses(status))]
 
 
 @router.patch("/{job_id}", response_model=ApplicationOut)
-def update_application(job_id: int, body: ApplicationPatch, session: Session = Depends(get_sync_db)) -> ApplicationOut:
+def update_application(
+    job_id: int,
+    body: ApplicationPatch,
+    session: Session = Depends(get_sync_db),
+    viewer: Viewer = Depends(require_viewer),
+) -> ApplicationOut:
     if body.status is None and body.notes is None:
         raise HTTPException(422, "Send status and/or notes")
     try:
