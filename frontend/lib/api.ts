@@ -45,7 +45,7 @@ export function getMatch(job: Job): MatchInfo | null {
 }
 
 /** Hire probability stored in analysis.extracted_json.hire (see worker/hire.py). */
-export type HireFactor = "eligibility" | "timezone" | "language" | "competition" | "freshness" | "seniority" | "employment";
+export type HireFactor = "eligibility" | "timezone" | "language" | "risk" | "competition" | "freshness" | "seniority" | "employment";
 export type HireInfo = {
   score: number; // 0-100
   factors: Partial<Record<HireFactor, number>>; // each 0-1

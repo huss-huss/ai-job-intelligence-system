@@ -57,3 +57,25 @@ async def dispatch_analyze(job_ids: list[int]) -> str | None:
         result = await run_in_threadpool(_worker_tasks().run_analyze_task, job_ids)
         return f"inline:{result.get('run_id')}"
     return enqueue_analyze_task(job_ids)
+
+
+def enqueue_llm_enrich_task() -> str | None:
+    from rq import Queue
+
+    queue = Queue("default", connection=get_redis())
+    job = queue.enqueue("worker.tasks.run_llm_enrich_task", job_timeout="10m")
+    return job.id if job else None
+
+
+async def dispatch_llm_enrich() -> dict:
+    """LLM extraction for the day's best jobs (worker.tasks.run_llm_enrich_task). Never raises.
+
+    Inline mode runs it now, after the day's scrapes, so the digest sees it. Redis mode queues it; jobs
+    the worker analyzes after it ran are considered the next day (the window is 36 hours).
+    """
+    try:
+        if settings.queue_mode == "inline":
+            return await run_in_threadpool(_worker_tasks().run_llm_enrich_task)
+        return {"queued": enqueue_llm_enrich_task()}
+    except Exception as exc:  # the scrape results and the digest matter more than AI extraction
+        return {"error": f"{type(exc).__name__}: {str(exc)[:300]}"}

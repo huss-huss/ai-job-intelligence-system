@@ -6,9 +6,9 @@ from types import SimpleNamespace
 
 import httpx
 
-from worker.ai import ExtractedFields, Extraction, HeuristicExtractor, LLMExtractor, Salary
+from worker.ai import ExtractedFields, Extraction, HeuristicExtractor, Salary
 from worker.notion import SCHEMA, NotionSync, page_properties
-from worker.pipeline import LLM_PRESCORE_THRESHOLD, analyze, discover, enrich
+from worker.pipeline import analyze, discover, enrich
 from worker.profile import load_profile
 from worker.sources.base import HttpClient, JobPosting
 
@@ -31,28 +31,11 @@ GOOD = JobPosting(
 BAD = JobPosting(source="t", external_id="bad", url="https://jobs.example.com/bad", title="Office Manager")
 
 
-class CountingLLM(LLMExtractor):
-    def __init__(self):
-        self.calls = 0
-
-    def extract(self, posting):
-        self.calls += 1
-        return HeuristicExtractor().extract(posting)
-
-
 def mock_http(handler) -> HttpClient:
     return HttpClient(transport=httpx.MockTransport(handler), min_interval=0, sleep=lambda s: None)
 
 
 # --- pipeline --------------------------------------------------------------------
-
-
-def test_llm_is_only_called_for_promising_jobs():
-    llm = CountingLLM()
-    good = analyze(GOOD, PROFILE, llm, now=NOW)
-    bad = analyze(BAD, PROFILE, llm, now=NOW)
-    assert llm.calls == 1
-    assert good.score > LLM_PRESCORE_THRESHOLD > bad.score
 
 
 def test_enrich_fills_monthly_non_usd_salary_from_extraction():

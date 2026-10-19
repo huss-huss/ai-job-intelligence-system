@@ -147,8 +147,10 @@ def score_job(
     *,
     seniority: str | None = None,
     risk_flags: list[str] | None = None,
+    eligibility: tuple[bool | None, str] | None = None,
     now: datetime | None = None,
 ) -> MatchResult:
+    """`eligibility` overrides location_eligibility (the LLM's reading, see pipeline.ai_eligibility)."""
     title = posting.title.lower()
     body = f"{title}\n{' '.join(posting.tags).lower()}\n{(posting.description or '').lower()}"
     reasons: list[str] = []
@@ -194,7 +196,7 @@ def score_job(
         reasons.append(f"Seniority mismatch ({level})")
 
     # Location
-    eligible, why = location_eligibility(posting, profile)
+    eligible, why = eligibility or location_eligibility(posting, profile)
     breakdown["location"] = {True: WEIGHTS["location"], None: WEIGHTS["location"] / 2, False: 0}[eligible]
     reasons.append(why)
 

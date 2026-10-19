@@ -19,9 +19,6 @@ from worker.sources.fulltext import FullTextOptions, FullTextStats, fetch_full_d
 
 logger = logging.getLogger(__name__)
 
-# Only spend LLM tokens on jobs that already look promising from cheap rules.
-LLM_PRESCORE_THRESHOLD = 35
-
 
 _COMPANY_SUFFIXES = re.compile(r"\b(inc|llc|ltd|gmbh|corp|co|company|limited|ab|bv|sa|srl|oy)\b\.?")
 # Query parameters that only track where a click came from; dropped when comparing URLs.
@@ -193,6 +190,9 @@ class DiscoveryReport:
     llm_calls: int = 0
     input_tokens: int = 0
     output_tokens: int = 0
+    reasoning_tokens: int = 0
+    llm_cost_usd: float = 0.0
+    llm_fallbacks: dict[str, int] = field(default_factory=dict)  # reason -> jobs that fell back to rules
     full_descriptions: FullTextStats = field(default_factory=FullTextStats)
 
 
@@ -211,7 +211,45 @@ def enrich(posting: JobPosting, extraction: Extraction) -> JobPosting:
             salary_currency=f.salary.currency,
             salary_period=f.salary.period,
         )
+    if extraction.method == "llm":
+        # Facts the LLM read from the whole posting; hire probability uses them (worker/hire.py).
+        if not posting.employment_type and f.employment_type:
+            updates["employment_type"] = f.employment_type
+        if not posting.timezone_note and f.timezone_requirement:
+            updates["timezone_note"] = f.timezone_requirement
+        if f.years_experience_min and "experience_years_min" not in posting.extra:
+            updates["extra"] = {**posting.extra, "experience_years_min": f.years_experience_min}
     return replace(posting, **updates) if updates else posting
+
+
+def _the(place: str) -> str:
+    return f"the {place}" if re.match(r"(?i)^(us|usa|uk|eu|united |netherlands|philippines)", place) else place
+
+
+def ai_eligibility(
+    posting: JobPosting, extraction: Extraction, profile: CandidateProfile, rules: tuple[bool | None, str]
+) -> tuple[bool | None, str] | None:
+    """The LLM's reading of who may apply, when it changes the rules' verdict; None keeps the rules.
+
+    It can settle an unknown ("Remote") either way and catch a restriction the rules missed, but it
+    never re-opens a job the rules found restricted: a wrong "eligible" costs an application, a wrong
+    "restricted" only hides one job, and the eval tool (llm-eval) measures how often they disagree.
+    """
+    if extraction.method != "llm" or rules[0] is False:
+        return None
+    f = extraction.fields
+    restriction = (f.location_restriction or "").strip()[:200]
+    if restriction:
+        probe = replace(posting, location=restriction, remote=True, description="")
+        verdict, _ = location_eligibility(probe, profile)
+        if verdict is False:
+            return False, f"AI read: applicants must be in {_the(restriction)}"
+        if verdict is True and rules[0] is None:
+            return True, f"AI read: open to applicants in {restriction}"
+        return None
+    if f.worldwide and rules[0] is None:
+        return True, "AI read: open to applicants worldwide"
+    return None
 
 
 def analyze(
@@ -221,16 +259,9 @@ def analyze(
     *,
     now: datetime | None = None,
 ) -> ScoredJob:
-    rules = HeuristicExtractor()
-    extraction = rules.extract(posting)
-    if isinstance(extractor, LLMExtractor):
-        prelim = score_job(posting, profile, seniority=extraction.fields.seniority, now=now)
-        if prelim.score >= LLM_PRESCORE_THRESHOLD:
-            extraction = extractor.extract(posting)
-    elif not isinstance(extractor, HeuristicExtractor):
-        extraction = extractor.extract(posting)
-
-    return score_posting(posting, extraction, profile, now=now)
+    """Extract facts with `extractor` and score them. Callers decide which jobs get the LLM
+    (`select_for_llm`); this always uses the extractor it is given."""
+    return score_posting(posting, extractor.extract(posting), profile, now=now)
 
 
 def score_posting(
@@ -247,18 +278,65 @@ def score_posting(
     enriched = enrich(posting, extraction)
     # A level the source states (FreeHire, Jobicy) beats one guessed from the title.
     seniority = _fit_level(enriched.seniority) or extraction.fields.seniority
+    rules_verdict = location_eligibility(enriched, profile)
+    ai_verdict = ai_eligibility(enriched, extraction, profile, rules_verdict)
+    eligible, location_reason = ai_verdict or rules_verdict
+    risk_flags = list(extraction.fields.risk_flags)
     match = score_job(
         enriched,
         profile,
         seniority=seniority,
-        risk_flags=list(extraction.fields.risk_flags),
+        risk_flags=risk_flags,
+        eligibility=(eligible, location_reason),
         now=now,
     )
-    eligible, location_reason = location_eligibility(enriched, profile)
     hire = estimate_hire_probability(
-        enriched, profile, eligible=eligible, location_reason=location_reason, seniority=seniority, now=now
+        enriched,
+        profile,
+        eligible=eligible,
+        location_reason=location_reason,
+        seniority=seniority,
+        risk_flags=risk_flags,
+        ai_eligibility=ai_verdict is not None,
+        now=now,
     )
     return ScoredJob(posting=enriched, extraction=extraction, match=match, hire=hire)
+
+
+def select_for_llm(scored: list[ScoredJob], n: int) -> list[int]:
+    """Indexes of the `n` best jobs by rules rank (then fit): the only ones that get LLM extraction.
+
+    Jobs with a zero fit (excluded titles) never qualify.
+    """
+    if n <= 0:
+        return []
+    order = sorted(
+        (i for i, j in enumerate(scored) if j.score > 0), key=lambda i: (scored[i].rank, scored[i].score), reverse=True
+    )
+    return order[:n]
+
+
+def count_llm(report: DiscoveryReport | dict, extraction: Extraction) -> None:
+    """Add one job's LLM usage (or fallback) to run stats: a DiscoveryReport or a stats dict."""
+    calls = extraction.method == "llm" or extraction.cost_usd > 0
+    values = {
+        "llm_calls": 1 if calls else 0,
+        "input_tokens": extraction.input_tokens,
+        "output_tokens": extraction.output_tokens,
+        "reasoning_tokens": extraction.reasoning_tokens,
+        "llm_cost_usd": extraction.cost_usd,
+    }
+    if isinstance(report, dict):
+        for k, v in values.items():
+            report[k] = round(report.get(k, 0) + v, 6) if k == "llm_cost_usd" else report.get(k, 0) + v
+        if extraction.fallback_reason:
+            fb = report.setdefault("llm_fallbacks", {})
+            fb[extraction.fallback_reason] = fb.get(extraction.fallback_reason, 0) + 1
+        return
+    for k, v in values.items():
+        setattr(report, k, getattr(report, k) + v)
+    if extraction.fallback_reason:
+        report.llm_fallbacks[extraction.fallback_reason] = report.llm_fallbacks.get(extraction.fallback_reason, 0) + 1
 
 
 def _fit_level(level: str | None) -> str | None:
@@ -306,12 +384,14 @@ def discover(
         if owns_client:
             http.close()
 
-    for posting in unique:
-        scored = analyze(posting, profile, extractor, now=now)
-        if scored.extraction.method == "llm":
-            report.llm_calls += 1
-            report.input_tokens += scored.extraction.input_tokens
-            report.output_tokens += scored.extraction.output_tokens
-        report.jobs.append(scored)
+    rules = HeuristicExtractor()
+    report.jobs = [analyze(posting, profile, rules, now=now) for posting in unique]
+    if isinstance(extractor, LLMExtractor):
+        # The LLM only reads the best jobs by rules rank, as many as today's extraction cap allows.
+        for i in select_for_llm(report.jobs, extractor.caller.guard.remaining_extractions()):
+            report.jobs[i] = analyze(unique[i], profile, extractor, now=now)
+            count_llm(report, report.jobs[i].extraction)
+    elif not isinstance(extractor, HeuristicExtractor):
+        report.jobs = [analyze(posting, profile, extractor, now=now) for posting in unique]
     report.jobs.sort(key=lambda j: (j.rank, j.score), reverse=True)
     return report

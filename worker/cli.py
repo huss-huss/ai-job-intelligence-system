@@ -6,6 +6,7 @@
     python -m worker.cli repair-text --dry-run   # needs DATABASE_URL
     python -m worker.cli telegram-setup --url https://<api-host>   # needs TELEGRAM_* env vars
     python -m worker.cli telegram-test
+    python -m worker.cli llm-enrich                     # the daily LLM step, on its own (needs DATABASE_URL)
 """
 
 from __future__ import annotations
@@ -21,6 +22,7 @@ from pathlib import Path
 import yaml
 
 from worker.ai import build_extractor
+from worker.budget import JsonFileUsageStore
 from worker.config import settings
 from worker.notion import NotionSync
 from worker.pipeline import DiscoveryReport, discover
@@ -84,8 +86,11 @@ def _print_table(report: DiscoveryReport, top: int, show_ineligible: bool) -> No
     )
     print(
         f"{report.fetched} fetched · {len(report.jobs)} unique · {eligible} eligible · {hidden} not open to your"
-        f" location · {report.llm_calls} LLM calls ({report.input_tokens + report.output_tokens} tokens)"
+        f" location · {report.llm_calls} LLM calls ({report.input_tokens + report.output_tokens} tokens,"
+        f" ${report.llm_cost_usd:.4f})"
     )
+    if report.llm_fallbacks:
+        print("LLM fell back to rules: " + ", ".join(f"{k} {v}" for k, v in sorted(report.llm_fallbacks.items())))
     full = report.full_descriptions
     if full.candidates:
         print(
@@ -96,9 +101,23 @@ def _print_table(report: DiscoveryReport, top: int, show_ineligible: bool) -> No
         print(f"! source {name} failed: {err[:150]}")
 
 
+def _usage_store():
+    """The llm_usage table when DATABASE_URL is set, else a JSON ledger (LLM_USAGE_FILE)."""
+    url = os.environ.get("DATABASE_URL")
+    if url:
+        from sqlalchemy.orm import Session
+
+        from worker.budget import SqlUsageStore
+
+        engine = _engine(url)
+        return SqlUsageStore(lambda: Session(engine))
+    return JsonFileUsageStore(settings.llm_usage_file)
+
+
 def cmd_discover(args) -> int:
     profile = _profile(args.profile)
-    extractor = build_extractor(settings.openai_api_key, settings.openai_model, settings.llm_base_url)
+    ai = settings.openai_api_key or settings.llm_base_url
+    extractor = build_extractor(settings, store=_usage_store() if ai else None)
     full_text = None if args.no_full_descriptions else FullTextOptions.from_settings(settings)
     started = time.monotonic()
     report = discover(_sources(args), profile, extractor, full_text=full_text)
@@ -149,23 +168,41 @@ def cmd_notion_setup(args) -> int:
     return 0
 
 
-def cmd_repair_text(args) -> int:
+def _engine(url: str):
     from sqlalchemy import create_engine, make_url
-    from sqlalchemy.orm import Session
 
-    url = args.database_url or os.environ.get("DATABASE_URL")
-    if not url:
-        print("DATABASE_URL (or --database-url) must be set", file=sys.stderr)
-        return 2
+    _backend_on_path()
     if url.startswith("postgres://"):
         url = "postgresql://" + url[len("postgres://") :]
     u = make_url(url)
     if u.drivername.startswith("postgresql"):
         u = u.set(drivername="postgresql+psycopg2")  # same as the worker's sync engine
+    return create_engine(u)
+
+
+def _database_url(args) -> str | None:
+    url = getattr(args, "database_url", None) or os.environ.get("DATABASE_URL")
+    if not url:
+        print("DATABASE_URL (or --database-url) must be set", file=sys.stderr)
+    return url
+
+
+def _backend_on_path() -> None:
+    backend = str(Path(__file__).resolve().parent.parent / "backend")
+    if backend not in sys.path:
+        sys.path.insert(0, backend)
+
+
+def cmd_repair_text(args) -> int:
+    from sqlalchemy.orm import Session
+
+    url = _database_url(args)
+    if not url:
+        return 2
 
     from worker.repair import repair_job_text
 
-    with Session(create_engine(u)) as session:
+    with Session(_engine(url)) as session:
         stats = repair_job_text(session, dry_run=args.dry_run, batch_size=args.batch_size)
     for job_id, column, before, after in stats.samples:
         print(f"  job {job_id} {column}: {before!r}\n  {'':>{len(str(job_id)) + len(column) + 5}}-> {after!r}")
@@ -177,9 +214,7 @@ def cmd_repair_text(args) -> int:
 
 def _telegram():
     """The bot lives in the backend package (app.telegram) so the API image doesn't need worker/."""
-    backend = str(Path(__file__).resolve().parent.parent / "backend")
-    if backend not in sys.path:
-        sys.path.insert(0, backend)
+    _backend_on_path()
     from app.telegram import cli
 
     return cli
@@ -195,6 +230,13 @@ def cmd_telegram_test(args) -> int:
 
 def cmd_telegram_digest(args) -> int:
     return _telegram().digest(dry_run=args.dry_run)
+
+
+def cmd_llm_enrich(args) -> int:
+    from worker.tasks import run_llm_enrich_task
+
+    print(json.dumps(run_llm_enrich_task(), indent=2, default=str))
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -239,6 +281,9 @@ def main(argv: list[str] | None = None) -> int:
     td = sub.add_parser("telegram-digest", help="send today's Telegram digest now (needs DATABASE_URL)")
     td.add_argument("--dry-run", action="store_true", help="print what would be sent; nothing is sent or marked")
     td.set_defaults(func=cmd_telegram_digest)
+
+    le = sub.add_parser("llm-enrich", help="LLM extraction for today's top jobs, within the budget")
+    le.set_defaults(func=cmd_llm_enrich)
 
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO if args.verbose else logging.WARNING, format="%(levelname)s %(message)s")

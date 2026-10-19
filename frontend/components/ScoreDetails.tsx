@@ -22,6 +22,7 @@ const HIRE_GATES: { key: HireFactor; label: string }[] = [
   { key: "eligibility", label: "Eligibility" },
   { key: "timezone", label: "Timezone" },
   { key: "language", label: "Language" },
+  { key: "risk", label: "Risk" }, // absent on jobs analyzed before it existed: counts as 1
 ];
 const HIRE_SOFT: { key: HireFactor; label: string; weight: number }[] = [
   { key: "competition", label: "Competition", weight: 30 },
