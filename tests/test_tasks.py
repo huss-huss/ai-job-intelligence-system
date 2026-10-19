@@ -200,3 +200,27 @@ def test_analyze_task_stores_hire_probability_and_rank(monkeypatch):
     assert stored["hire_probability"] == stored["hire"]["score"]
     assert stored["hire"]["factors"]["eligibility"] == 1.0  # "Remote, Global"
     assert stored["rank"] == round(100 * (stored["match"]["score"] / 100 * stored["hire"]["score"] / 100) ** 0.5)
+
+
+def test_long_country_list_is_shortened_for_the_column_but_kept_for_eligibility():
+    from worker.sources.base import JobPosting
+    from worker.tasks import COLUMN_LIMIT, _fit, _meta, _to_posting
+
+    countries = ", ".join(f"Country{i}" for i in range(80)) + ", Ethiopia"
+    posting = JobPosting(
+        source="weworkremotely", external_id="x1", url="https://x/1", title="Backend Engineer", location=countries
+    )
+    stored = _fit(posting.location)
+    assert len(stored) <= COLUMN_LIMIT and stored.endswith("…") and "Ethiopia" not in stored
+
+    meta = _meta(posting)
+    assert meta["location_full"] == countries
+
+    from types import SimpleNamespace
+
+    row = SimpleNamespace(  # the fields _to_posting reads from a JobRaw row
+        url=posting.url, title=posting.title, company=None, location=stored,
+        description=None, posted_at=None, meta=meta,
+    )  # fmt: skip
+    assert "Ethiopia" in _to_posting(row).location
+    assert _fit("short") == "short" and _fit(None) is None
