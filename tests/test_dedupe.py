@@ -41,8 +41,9 @@ def test_freehire_copy_of_a_djinni_job_merges_by_url_and_keeps_richest_data():
 
 
 def test_freehire_title_with_company_prefix_merges_with_wwr_and_keeps_wwr_location():
-    fh = next(p for p in FREEHIRE if p.title.startswith("Proxify AB: "))
-    wwr = next(p for p in WWR if p.company == "Proxify AB" and "Python" in p.title)
+    fh = next(p for p in FREEHIRE if ": " in p.title)  # "<company>: <title>" copied from WWR
+    prefix, _, title = fh.title.partition(": ")
+    wwr = next(p for p in WWR if p.company == prefix and p.title == title)
     merged = dedupe_across_sources([fh, wwr])
     assert len(merged) == 1
     job = merged[0]

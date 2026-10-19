@@ -135,7 +135,8 @@ def test_eligible_filter_against_postgres():
             if flag == "unanalyzed":
                 continue
             match = {} if flag == "missing" else {"eligible": flag}
-            s.add(JobAnalysis(job_id=job.id, extracted_json={"match": match}, score=0.5 - i / 10))
+            extracted = {"match": match, **({"rank": [10, 90][i]} if i < 2 else {})}  # rank only on the first two
+            s.add(JobAnalysis(job_id=job.id, extracted_json=extracted, score=0.5 - i / 10))
         s.commit()
 
     url, connect_args = async_database_url(TEST_DATABASE_URL)
@@ -161,6 +162,9 @@ def test_eligible_filter_against_postgres():
         assert titles("false") == ["False"]
         assert titles("unknown") == ["None", "missing", "unanalyzed"]
         assert titles("true,unknown") == ["True", "None", "missing", "unanalyzed"]
+        ranked = client.get("/api/jobs", params={"sort": "rank"}).json()
+        # stored rank first, then rows without one by fit score, unanalyzed last
+        assert [j["title"] for j in ranked["items"]] == ["False", "True", "None", "missing", "unanalyzed"]
     finally:
         main.app.dependency_overrides.clear()
         Base.metadata.drop_all(sync_engine, tables=tables)

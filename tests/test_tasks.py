@@ -129,7 +129,7 @@ def _freehire_posting():
     from worker.sources.freehire import FreeHireAdapter
 
     rows = json.loads((FIXTURES / "freehire.json").read_text())["data"]
-    return FreeHireAdapter.parse(next(j for j in rows if j["company"] == "Supabase"))
+    return FreeHireAdapter.parse(next(j for j in rows if j.get("source") == "ashby"))
 
 
 def test_hire_inputs_round_trip_through_jobs_raw_meta():

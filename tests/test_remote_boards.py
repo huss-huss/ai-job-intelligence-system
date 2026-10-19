@@ -54,7 +54,7 @@ def freehire_handler(calls: list, *, meta_extra: dict | None = None, headers: di
 
 def test_freehire_parse_maps_geography_counts_and_enrichment():
     rows = load_json("freehire.json")["data"]
-    p = FreeHireAdapter.parse(next(j for j in rows if j["company"] == "Supabase"))
+    p = FreeHireAdapter.parse(next(j for j in rows if j.get("source") == "ashby"))
     assert p.source == "freehire" and p.external_id.startswith("finops-data-engineer")
     assert p.location == "Remote, Global" and p.regions == ["global"] and p.remote is True
     assert p.employment_type == "full_time"
@@ -106,8 +106,8 @@ def test_freehire_sends_each_query_with_repeated_facets_and_attaches_company_reg
     assert "queries" not in first and "company_pages" not in first
     companies = [c for c in calls if c.url.path.endswith("/companies")]
     assert len(companies) == 1 and companies[0].url.params["remote_regions"] == "africa"
-    lemon = next(p for p in postings if p.company == "Lemon.io")
-    assert lemon.extra["company_hires_remote_in"] == ["africa"]
+    hiring = next(p for p in postings if p.extra.get("origin") == "weworkremotely")  # its company is listed
+    assert hiring.extra["company_hires_remote_in"] == ["africa"]
 
 
 def test_freehire_ignored_param_fails_loudly():
@@ -259,12 +259,12 @@ def test_wwr_splits_company_and_prefers_country_list_over_region():
 
     postings = WeWorkRemotelyAdapter(mock_client(handler)).fetch({"categories": ["back-end-programming"]})
     assert calls[0].url.path == "/categories/remote-back-end-programming-jobs.rss"
-    proxify = next(p for p in postings if p.company == "Proxify AB")
-    assert proxify.title == "Senior Backend Developer (Python)"
-    assert proxify.location == "Anywhere in the World" and proxify.employment_type == "full_time"
-    assert proxify.url.startswith("https://weworkremotely.com/remote-jobs/")  # link back to the listing
-    assert "Python" in proxify.tags and "Back-End Programming" in proxify.tags
-    restricted = next(p for p in postings if p.company == "Twikey")
+    worldwide = next(p for p in postings if p.location == "Anywhere in the World" and "Python" in p.title)
+    assert worldwide.title == "Senior Backend Developer (Python)" and worldwide.company  # "<company>: <title>" split
+    assert worldwide.location == "Anywhere in the World" and worldwide.employment_type == "full_time"
+    assert worldwide.url.startswith("https://weworkremotely.com/remote-jobs/")  # link back to the listing
+    assert "Python" in worldwide.tags and "Back-End Programming" in worldwide.tags
+    restricted = next(p for p in postings if p.location != "Anywhere in the World")
     assert restricted.location.startswith("Andorra, Albania") and "\U0001f1e6" not in restricted.location
 
 
