@@ -12,6 +12,7 @@ from worker.ai import Extraction, Extractor, HeuristicExtractor, LLMExtractor
 from worker.matching import MatchResult, score_job
 from worker.profile import CandidateProfile
 from worker.sources import HttpClient, JobPosting, SourceError, fetch_postings
+from worker.sources.fulltext import FullTextOptions, FullTextStats, fetch_full_descriptions
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +59,7 @@ class DiscoveryReport:
     llm_calls: int = 0
     input_tokens: int = 0
     output_tokens: int = 0
+    full_descriptions: FullTextStats = field(default_factory=FullTextStats)
 
 
 def enrich(posting: JobPosting, extraction: Extraction) -> JobPosting:
@@ -112,8 +114,13 @@ def discover(
     *,
     http: HttpClient | None = None,
     now: datetime | None = None,
+    full_text: FullTextOptions | None = None,
 ) -> DiscoveryReport:
-    """Run every source; one failing source is reported, not fatal."""
+    """Run every source; one failing source is reported, not fatal.
+
+    With `full_text`, short descriptions from excerpt-only sources are replaced by the posting
+    page's text (one budget for the whole run).
+    """
     report = DiscoveryReport()
     collected: list[JobPosting] = []
     owns_client = http is None
@@ -129,11 +136,14 @@ def discover(
                 continue
             report.fetched += len(postings)
             collected.extend(postings)
+        unique = dedupe_across_sources(collected)
+        if full_text:
+            unique, report.full_descriptions = fetch_full_descriptions(unique, http, full_text)
     finally:
         if owns_client:
             http.close()
 
-    for posting in dedupe_across_sources(collected):
+    for posting in unique:
         scored = analyze(posting, profile, extractor, now=now)
         if scored.extraction.method == "llm":
             report.llm_calls += 1

@@ -50,7 +50,11 @@ class JobPosting:
 
 
 class SourceError(RuntimeError):
-    """Raised when a source can't be fetched after retries."""
+    """Raised when a source can't be fetched after retries. `status` is the final HTTP status, if any."""
+
+    def __init__(self, message: str, status: int | None = None) -> None:
+        super().__init__(message)
+        self.status = status
 
 
 class SourceAdapter(Protocol):
@@ -74,6 +78,7 @@ class HttpClient:
         user_agent: str = DEFAULT_USER_AGENT,
         timeout: float = 20.0,
         max_retries: int = 3,
+        max_redirects: int = 5,  # a redirect loop (some sites' bot walls) fails fast instead of after 20 hops
         backoff_base: float = 1.0,
         min_interval: float = 1.0,
         transport: httpx.BaseTransport | None = None,
@@ -83,6 +88,7 @@ class HttpClient:
             headers={"User-Agent": user_agent, "Accept": "application/json"},
             timeout=timeout,
             follow_redirects=True,
+            max_redirects=max_redirects,
             transport=transport,
         )
         self.max_retries = max_retries
@@ -103,26 +109,55 @@ class HttpClient:
         json: Any = None,
         headers: dict[str, str] | None = None,
     ) -> Any:
+        return self._request(method, url, params=params, json=json, headers=headers).json()
+
+    def get_text(
+        self,
+        url: str,
+        *,
+        accept: str = "text/html,application/xhtml+xml;q=0.9,*/*;q=0.5",
+        timeout: float | None = None,
+        max_retries: int | None = None,
+    ) -> str:
+        """GET a page as text. `timeout` and `max_retries` override the client defaults for this call."""
+        return self._request("GET", url, headers={"Accept": accept}, timeout=timeout, max_retries=max_retries).text
+
+    def _request(
+        self,
+        method: str,
+        url: str,
+        *,
+        params: dict[str, Any] | None = None,
+        json: Any = None,
+        headers: dict[str, str] | None = None,
+        timeout: float | None = None,
+        max_retries: int | None = None,
+    ) -> httpx.Response:
+        retries = self.max_retries if max_retries is None else max_retries
+        extra = {} if timeout is None else {"timeout": timeout}
         last_error: Exception | None = None
-        for attempt in range(self.max_retries + 1):
+        for attempt in range(retries + 1):
             self._throttle()
             try:
-                resp = self._client.request(method, url, params=params, json=json, headers=headers)
+                resp = self._client.request(method, url, params=params, json=json, headers=headers, **extra)
                 if resp.status_code in RETRYABLE_STATUS:
                     raise httpx.HTTPStatusError(f"HTTP {resp.status_code}", request=resp.request, response=resp)
                 resp.raise_for_status()
-                return resp.json()
+                return resp
             except (httpx.TransportError, httpx.HTTPStatusError) as exc:
                 status = exc.response.status_code if isinstance(exc, httpx.HTTPStatusError) else None
                 if status is not None and status not in RETRYABLE_STATUS:
                     detail = exc.response.text[:300]
-                    raise SourceError(f"{method} {url} failed with HTTP {status}: {detail}") from exc
+                    raise SourceError(f"{method} {url} failed with HTTP {status}: {detail}", status) from exc
                 last_error = exc
-                if attempt < self.max_retries:
+                if attempt < retries:
                     delay = self._retry_delay(exc, attempt)
                     logger.warning("%s %s failed (%s), retry %d in %.1fs", method, url, exc, attempt + 1, delay)
                     self._sleep(delay)
-        raise SourceError(f"{method} {url} failed after {self.max_retries + 1} attempts: {last_error}")
+            except httpx.RequestError as exc:  # e.g. a redirect loop: retrying won't help
+                raise SourceError(f"{method} {url} failed: {exc}") from exc
+        status = last_error.response.status_code if isinstance(last_error, httpx.HTTPStatusError) else None
+        raise SourceError(f"{method} {url} failed after {retries + 1} attempts: {last_error}", status)
 
     def _retry_delay(self, exc: Exception, attempt: int) -> float:
         if isinstance(exc, httpx.HTTPStatusError):
