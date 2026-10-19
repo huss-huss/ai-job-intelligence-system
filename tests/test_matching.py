@@ -5,6 +5,7 @@ import pytest
 
 from worker.matching import INELIGIBLE_CAP, detect_seniority, location_eligibility, score_job
 from worker.profile import CandidateProfile, load_profile
+from worker.salary import FX_ENV_VAR
 from worker.sources.base import JobPosting
 
 NOW = datetime(2026, 10, 16, tzinfo=UTC)
@@ -112,9 +113,42 @@ def test_low_salary_and_old_posting_cost_points(profile):
     assert stale.breakdown["salary"] == 0 and stale.breakdown["recency"] == 0
 
 
-def test_non_usd_salary_is_treated_as_unknown(profile):
-    result = score_job(job(salary_max=20000, salary_currency="EUR"), profile, now=NOW)
+def test_usd_annual_salary_reason_has_no_conversion(profile):
+    result = score_job(job(), profile, now=NOW)
+    assert result.breakdown["salary"] == 10
+    assert "Salary up to $120,000/yr" in result.reasons
+
+
+def test_non_usd_salary_is_converted_and_reason_shows_both(profile, monkeypatch):
+    monkeypatch.setenv(FX_ENV_VAR, '{"EUR": 1.1}')
+    result = score_job(job(salary_min=None, salary_max=60000, salary_currency="EUR"), profile, now=NOW)
+    assert result.breakdown["salary"] == 10
+    assert "Salary up to €60,000/yr ≈ $66,000" in result.reasons
+
+
+def test_hourly_salary_is_annualized_before_scoring(profile):
+    # $40/hr would fail a $30k floor if read as annual; 40 × 2080 = $83,200 clears it.
+    result = score_job(job(salary_min=None, salary_max=40, salary_period="hour"), profile, now=NOW)
+    assert result.breakdown["salary"] == 10
+    assert "Salary up to $40/hr ≈ $83,200" in result.reasons
+
+
+def test_low_monthly_salary_falls_below_target(profile):
+    result = score_job(job(salary_min=None, salary_max=2000, salary_period="month"), profile, now=NOW)
+    assert result.breakdown["salary"] == 0  # 2,000 × 12 = 24,000 < 30,000
+    assert "Salary below target ($2,000/mo ≈ $24,000)" in result.reasons
+
+
+def test_unknown_currency_scores_as_unknown_with_reason(profile):
+    result = score_job(job(salary_max=20000, salary_currency="XYZ"), profile, now=NOW)
     assert result.breakdown["salary"] == 5
+    assert any("XYZ 20,000/yr not converted" in r for r in result.reasons)
+
+
+def test_salary_points_scale_the_same_after_normalization(profile):
+    annual = score_job(job(salary_min=None, salary_max=83200), profile, now=NOW)
+    hourly = score_job(job(salary_min=None, salary_max=40, salary_period="hour"), profile, now=NOW)
+    assert annual.score == hourly.score and annual.breakdown == hourly.breakdown
 
 
 def test_risk_flags_subtract_points(profile):

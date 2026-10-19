@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 from worker.profile import CandidateProfile
+from worker.salary import format_salary, to_annual_usd
 from worker.sources.base import JobPosting
 
 WEIGHTS = {"role": 25, "skills": 35, "seniority": 10, "location": 15, "salary": 10, "recency": 5}
@@ -87,6 +88,23 @@ def location_eligibility(posting: JobPosting, profile: CandidateProfile) -> tupl
     return False, f"Restricted to {posting.location}"
 
 
+def _salary_points(posting: JobPosting, floor_usd: float | None) -> tuple[float, str | None]:
+    top = posting.salary_max or posting.salary_min
+    if not top:
+        return WEIGHTS["salary"] / 2, None
+    original = format_salary(top, posting.salary_currency, posting.salary_period)
+    annual = to_annual_usd(posting.salary_min, posting.salary_max, posting.salary_currency, posting.salary_period)
+    if annual is None:
+        return WEIGHTS["salary"] / 2, f"Salary {original} not converted to USD (unknown currency or period)"
+    # "$120,000/yr" needs no conversion note; "€60,000/yr ≈ $70,200" and "$40/hr ≈ $83,200" do.
+    shown = original if original == format_salary(annual.top, "USD", "year") else f"{original} ≈ ${annual.top:,.0f}"
+    if floor_usd is None:
+        return WEIGHTS["salary"] / 2, None
+    if annual.top >= floor_usd:
+        return WEIGHTS["salary"], f"Salary up to {shown}"
+    return 0, f"Salary below target ({shown})"
+
+
 def score_job(
     posting: JobPosting,
     profile: CandidateProfile,
@@ -144,17 +162,10 @@ def score_job(
     breakdown["location"] = {True: WEIGHTS["location"], None: WEIGHTS["location"] / 2, False: 0}[eligible]
     reasons.append(why)
 
-    # Salary (annual USD; non-USD salaries are treated as unknown rather than guessed)
-    top = posting.salary_max or posting.salary_min
-    usd = posting.salary_currency in (None, "USD")
-    if profile.min_salary_usd is None or not top or not usd:
-        breakdown["salary"] = WEIGHTS["salary"] / 2
-    elif top >= profile.min_salary_usd:
-        breakdown["salary"] = WEIGHTS["salary"]
-        reasons.append(f"Salary up to ${top:,.0f}")
-    else:
-        breakdown["salary"] = 0
-        reasons.append(f"Salary below target (${top:,.0f})")
+    # Salary, normalized to annual USD. Unknown currencies or periods score as unknown, never guessed.
+    breakdown["salary"], salary_reason = _salary_points(posting, profile.min_salary_usd)
+    if salary_reason:
+        reasons.append(salary_reason)
 
     # Recency
     if posting.posted_at:
