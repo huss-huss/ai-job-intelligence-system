@@ -43,8 +43,10 @@ Score  Elig  Title                                             Company          
   | Location | 15 | "USA only", work-authorization clauses, and on-site roles make a job **ineligible** (score capped at 20) |
   | Seniority | 10 | |
   | Salary | 10 | top of the range, normalized to annual USD, against `min_salary_usd` (5 when unknown) |
-  | Recency | 5 | |
+  | Recency | 5 | days since the posting went live, or since its last update when the source reports one (see below) |
   | Risk flags | −10 each | commission-only, unpaid, upfront fees, vague postings |
+
+- **Recency dates**: `posted_at` is always when the posting first went live. Greenhouse also returns `updated_at`, which keeps moving while a role stays open, so a requisition first published months ago isn't scored as stale: recency uses the newer of the two, and the reason says which (`Updated 3 days ago, first posted 251 days ago` vs `Posted 60 days ago`). An update less than a day after publishing counts as the original post. `updated_at` is kept in `jobs_raw.meta` (no column) and refreshed on every scrape, so `POST /api/analyze` rescores stored rows. Lever's public API only has `createdAt`, so Lever recency is the creation date; the other boards report a single publication date.
 
 - **Salary normalization** (`worker/salary.py`): hourly × 2080 (40 h × 52 weeks), daily × 260, weekly × 52, monthly × 12; no period means annual and no currency means USD. Other currencies convert with a dated static table (USD per unit), which `FX_RATES_JSON='{"EUR": 1.1}'` overrides or extends. A currency or period the table doesn't know is scored as unknown, never guessed. Period and currency are read from the source's fields or from text such as `$40/hr`, `€5,000 per month`, `£70k`, `USD 120,000 - 150,000`. The reason shows both figures, e.g. `Salary up to €60,000/yr ≈ $70,200`. Stored `salary_min`/`salary_max` stay in the source's own unit.
 
@@ -86,7 +88,7 @@ DATABASE_URL=postgresql://... python -m worker.cli repair-text             # app
 
 ```bash
 pip install pytest ruff
-pytest          # 191 tests, offline: adapters run against trimmed real API responses
+pytest          # 199 tests, offline: adapters run against trimmed real API responses
 TEST_DATABASE_URL=postgresql://postgres@localhost:5433/scratch pytest   # +1: eligibility filter on a real Postgres (drops and recreates the job tables)
 ruff check worker tests
 ```

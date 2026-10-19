@@ -92,6 +92,7 @@ def cmd_discover(args) -> int:
                         "source": j.posting.source,
                         "location": j.posting.location,
                         "posted_at": j.posting.posted_at.isoformat() if j.posting.posted_at else None,
+                        "updated_at": j.posting.updated_at.isoformat() if j.posting.updated_at else None,
                         **j.match.to_dict(),
                     }
                     for j in report.jobs

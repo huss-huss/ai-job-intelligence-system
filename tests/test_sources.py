@@ -76,6 +76,12 @@ def test_greenhouse_unescapes_html_content():
     assert p.url.startswith("https://")
 
 
+def test_greenhouse_keeps_first_published_as_posted_and_records_updated():
+    p = GreenhouseAdapter.parse(load("greenhouse")["jobs"][0])
+    assert p.posted_at == parse_datetime("2024-12-20T13:53:38-05:00")
+    assert p.updated_at == parse_datetime("2026-08-21T21:32:54-04:00")
+
+
 def test_lever_parses_salary_range_and_workplace():
     p = LeverAdapter.parse(load("lever")[0], "leverdemo")
     assert p.company == "leverdemo"

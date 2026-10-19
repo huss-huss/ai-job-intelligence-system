@@ -1,11 +1,14 @@
+import json
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
 
-from worker.matching import INELIGIBLE_CAP, detect_seniority, location_eligibility, score_job
+from worker.matching import INELIGIBLE_CAP, detect_seniority, location_eligibility, recency_date, score_job
 from worker.profile import CandidateProfile, load_profile
 from worker.salary import FX_ENV_VAR
+from worker.sources.adapters import GreenhouseAdapter, LeverAdapter
 from worker.sources.base import JobPosting
 
 NOW = datetime(2026, 10, 16, tzinfo=UTC)
@@ -111,6 +114,50 @@ def test_low_salary_and_old_posting_cost_points(profile):
     stale = score_job(job(salary_min=10000, salary_max=15000, posted_at=NOW - timedelta(days=60)), profile, now=NOW)
     assert stale.score < fresh.score
     assert stale.breakdown["salary"] == 0 and stale.breakdown["recency"] == 0
+
+
+def test_recent_update_beats_old_first_published(profile):
+    """A role still being maintained scores as fresh; the reason says it was updated, not posted."""
+    live = job(posted_at=NOW - timedelta(days=251), updated_at=NOW - timedelta(days=3))
+    result = score_job(live, profile, now=NOW)
+    assert result.breakdown["recency"] == 5
+    assert "Updated 3 days ago, first posted 251 days ago" in result.reasons
+    assert not any(r.startswith("Posted") for r in result.reasons)
+
+
+def test_old_posting_without_update_says_posted(profile):
+    result = score_job(job(posted_at=NOW - timedelta(days=60)), profile, now=NOW)
+    assert result.breakdown["recency"] == 0
+    assert "Posted 60 days ago" in result.reasons
+
+
+def test_same_day_update_counts_as_posted(profile):
+    """Greenhouse sets updated_at a few hours after publishing; that's not a separate update."""
+    posted = NOW - timedelta(days=2, hours=5)
+    result = score_job(job(posted_at=posted, updated_at=posted + timedelta(hours=4)), profile, now=NOW)
+    assert recency_date(job(posted_at=posted, updated_at=posted + timedelta(hours=4))) == (posted, False)
+    assert result.breakdown["recency"] == 5
+    assert not any(r.startswith(("Updated", "Posted")) for r in result.reasons)
+
+
+def test_greenhouse_fixture_recency_uses_updated_at(profile):
+    """Fixture job: first_published 2024-12-20, updated_at 2026-08-21, so it's live, not 600 days old."""
+    raw = json.loads((ROOT / "tests/fixtures/greenhouse.json").read_text())["jobs"][0]
+    # The fixture's sales title is in the example profile's exclude list, which skips scoring.
+    posting = replace(GreenhouseAdapter.parse(raw), title="Senior Software Engineer")
+    now = posting.updated_at + timedelta(days=3, hours=1)
+    result = score_job(posting, profile, now=now)
+    assert result.breakdown["recency"] == 5
+    assert any(r.startswith("Updated 3 days ago, first posted 6") for r in result.reasons)
+    stale = score_job(replace(posting, updated_at=None), profile, now=now)  # what scoring did before
+    assert stale.breakdown["recency"] == 0
+    assert any(r.startswith("Posted 6") for r in stale.reasons)
+
+
+def test_lever_recency_uses_created_at_only(profile):
+    posting = LeverAdapter.parse(json.loads((ROOT / "tests/fixtures/lever.json").read_text())[0], "leverdemo")
+    assert posting.updated_at is None
+    assert recency_date(posting) == (posting.posted_at, False)
 
 
 def test_usd_annual_salary_reason_has_no_conversion(profile):

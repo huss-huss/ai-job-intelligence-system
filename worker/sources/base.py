@@ -29,7 +29,8 @@ class JobPosting:
     company: str | None = None
     location: str | None = None
     description: str | None = None
-    posted_at: datetime | None = None
+    posted_at: datetime | None = None  # when the posting first went live
+    updated_at: datetime | None = None  # last edit, for sources that report one (Greenhouse)
     remote: bool | None = None
     tags: list[str] = field(default_factory=list)
     salary_min: float | None = None

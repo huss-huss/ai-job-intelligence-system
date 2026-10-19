@@ -27,6 +27,7 @@ from worker.notion import NotionSync  # noqa: E402
 from worker.pipeline import ScoredJob, analyze  # noqa: E402
 from worker.profile import CandidateProfile, load_profile  # noqa: E402
 from worker.sources import JobPosting, fetch_postings  # noqa: E402
+from worker.sources.base import parse_datetime  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +35,14 @@ META_FIELDS = (
     "source", "external_id", "remote", "tags",
     "salary_min", "salary_max", "salary_currency", "salary_text", "salary_period",
 )  # fmt: skip
+
+
+def _meta(p: JobPosting) -> dict:
+    """Source facts without a jobs_raw column. Datetimes are stored as ISO strings (JSONB)."""
+    meta = {k: v for k, v in asdict(p).items() if k in META_FIELDS}
+    if p.updated_at:
+        meta["updated_at"] = p.updated_at.isoformat()
+    return meta
 
 
 def _source_config(source: Source, params: dict | None) -> dict:
@@ -67,6 +76,7 @@ def _to_posting(job: JobRaw) -> JobPosting:
         location=job.location,
         description=job.description,
         posted_at=job.posted_at,
+        updated_at=parse_datetime(meta.get("updated_at")),
         remote=meta.get("remote"),
         tags=meta.get("tags") or [],
         salary_min=meta.get("salary_min"),
@@ -100,10 +110,13 @@ def run_scrape_task(source_id: int, params: dict | None = None) -> dict:
         try:
             postings = fetch_postings(_source_config(source, params))
             for p in postings:
-                exists = session.execute(
-                    select(JobRaw.id).where(JobRaw.source_id == source_id, JobRaw.content_hash == p.content_hash)
+                existing = session.execute(
+                    select(JobRaw).where(JobRaw.source_id == source_id, JobRaw.content_hash == p.content_hash)
                 ).scalar_one_or_none()
-                if exists:
+                if existing:
+                    # Keep the "updated" date current so a re-analysis scores recency correctly.
+                    if p.updated_at and (existing.meta or {}).get("updated_at") != p.updated_at.isoformat():
+                        existing.meta = {**(existing.meta or {}), "updated_at": p.updated_at.isoformat()}
                     continue
                 raw = JobRaw(
                     source_id=source_id,
@@ -114,7 +127,7 @@ def run_scrape_task(source_id: int, params: dict | None = None) -> dict:
                     description=p.description,
                     posted_at=p.posted_at,
                     content_hash=p.content_hash,
-                    meta={k: v for k, v in asdict(p).items() if k in META_FIELDS},
+                    meta=_meta(p),
                 )
                 session.add(raw)
                 session.flush()
