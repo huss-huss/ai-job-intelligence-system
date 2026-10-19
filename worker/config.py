@@ -29,6 +29,14 @@ class Settings(BaseSettings):
     # Currency rates for salary scoring: JSON of USD per unit, merged over worker/salary.py's table
     fx_rates_json: str = ""
 
+    # Full descriptions for sources whose API returns excerpts (worker/sources/fulltext.py).
+    # Postings from these sources with a description under MIN_CHARS get their page fetched, at most
+    # MAX_PAGES pages and MAX_SECONDS per scrape run. MIN_CHARS=0 turns it off.
+    full_description_sources: str = "remoteok,himalayas"
+    full_description_min_chars: int = 1500
+    full_description_max_pages: int = 10
+    full_description_max_seconds: float = 20.0
+
     # Webhook alert (optional), fired for jobs at or above the profile's notify_threshold
     alert_webhook_url: str = ""
 

@@ -23,6 +23,7 @@ from worker.notion import NotionSync
 from worker.pipeline import DiscoveryReport, discover
 from worker.profile import CandidateProfile, load_profile
 from worker.sources import SOURCE_TYPES
+from worker.sources.fulltext import FullTextOptions
 
 DEFAULT_SOURCES = [
     {"type": "remotive", "search": "python"},
@@ -71,6 +72,12 @@ def _print_table(report: DiscoveryReport, top: int, show_ineligible: bool) -> No
         f"{report.fetched} fetched · {len(report.jobs)} unique · {hidden} not open to your location"
         f" · {report.llm_calls} LLM calls ({report.input_tokens + report.output_tokens} tokens)"
     )
+    full = report.full_descriptions
+    if full.candidates:
+        print(
+            f"full descriptions: {full.fetched} fetched · {full.failed} kept the excerpt · {full.skipped} skipped"
+            f" (budget {full.skipped_budget}, robots.txt {full.skipped_robots}, failing host {full.skipped_host})"
+        )
     for name, err in report.errors.items():
         print(f"! source {name} failed: {err[:150]}")
 
@@ -78,7 +85,8 @@ def _print_table(report: DiscoveryReport, top: int, show_ineligible: bool) -> No
 def cmd_discover(args) -> int:
     profile = _profile(args.profile)
     extractor = build_extractor(settings.openai_api_key, settings.openai_model, settings.llm_base_url)
-    report = discover(_sources(args), profile, extractor)
+    full_text = None if args.no_full_descriptions else FullTextOptions.from_settings(settings)
+    report = discover(_sources(args), profile, extractor, full_text=full_text)
     _print_table(report, args.top, args.show_ineligible)
 
     if args.json:
@@ -163,6 +171,11 @@ def main(argv: list[str] | None = None) -> int:
     d.add_argument("--show-ineligible", action="store_true", help="include jobs not open to your location")
     d.add_argument("--json", help="write all scored jobs to this file")
     d.add_argument("--notion", action="store_true", help="sync matches above notify_threshold to Notion")
+    d.add_argument(
+        "--no-full-descriptions",
+        action="store_true",
+        help="don't fetch posting pages for short descriptions (see FULL_DESCRIPTION_* settings)",
+    )
     d.set_defaults(func=cmd_discover)
 
     n = sub.add_parser("notion-setup", help="add FirstFetch properties to your Notion database")

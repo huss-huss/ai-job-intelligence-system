@@ -6,7 +6,7 @@ RQ job definitions. Run with: PYTHONPATH=backend rq worker
 import logging
 import sys
 import traceback
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -26,8 +26,9 @@ from worker.config import settings  # noqa: E402
 from worker.notion import NotionSync  # noqa: E402
 from worker.pipeline import ScoredJob, analyze  # noqa: E402
 from worker.profile import CandidateProfile, load_profile  # noqa: E402
-from worker.sources import JobPosting, fetch_postings  # noqa: E402
+from worker.sources import HttpClient, JobPosting, fetch_postings  # noqa: E402
 from worker.sources.base import parse_datetime  # noqa: E402
+from worker.sources.fulltext import FullTextOptions, fetch_full_descriptions  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +44,17 @@ def _meta(p: JobPosting) -> dict:
     if p.updated_at:
         meta["updated_at"] = p.updated_at.isoformat()
     return meta
+
+
+def _full_text_options(config: dict) -> FullTextOptions:
+    """FULL_DESCRIPTION_* settings; a source's config can force it on or off with "full_descriptions"."""
+    options = FullTextOptions.from_settings(settings)
+    flag = config.get("full_descriptions")
+    if flag is True:
+        return replace(options, sources=options.sources | {config.get("type", "")})
+    if flag is False:
+        return replace(options, min_chars=0)
+    return options
 
 
 def _source_config(source: Source, params: dict | None) -> dict:
@@ -108,16 +120,23 @@ def run_scrape_task(source_id: int, params: dict | None = None) -> dict:
 
         inserted_ids: list[int] = []
         try:
-            postings = fetch_postings(_source_config(source, params))
-            for p in postings:
-                existing = session.execute(
-                    select(JobRaw).where(JobRaw.source_id == source_id, JobRaw.content_hash == p.content_hash)
-                ).scalar_one_or_none()
-                if existing:
-                    # Keep the "updated" date current so a re-analysis scores recency correctly.
-                    if p.updated_at and (existing.meta or {}).get("updated_at") != p.updated_at.isoformat():
-                        existing.meta = {**(existing.meta or {}), "updated_at": p.updated_at.isoformat()}
-                    continue
+            config = _source_config(source, params)
+            with HttpClient() as http:
+                postings = fetch_postings(config, http=http)
+                new: list[JobPosting] = []
+                for p in postings:
+                    existing = session.execute(
+                        select(JobRaw).where(JobRaw.source_id == source_id, JobRaw.content_hash == p.content_hash)
+                    ).scalar_one_or_none()
+                    if existing:
+                        # Keep the "updated" date current so a re-analysis scores recency correctly.
+                        if p.updated_at and (existing.meta or {}).get("updated_at") != p.updated_at.isoformat():
+                            existing.meta = {**(existing.meta or {}), "updated_at": p.updated_at.isoformat()}
+                        continue
+                    new.append(p)
+                # Only new postings: pages of jobs stored on an earlier run aren't fetched again.
+                new, full_text = fetch_full_descriptions(new, http, _full_text_options(config))
+            for p in new:
                 raw = JobRaw(
                     source_id=source_id,
                     url=p.url,
@@ -135,7 +154,11 @@ def run_scrape_task(source_id: int, params: dict | None = None) -> dict:
 
             run.status = "completed"
             run.ended_at = datetime.now(UTC)
-            run.stats = {"fetched": len(postings), "inserted": len(inserted_ids)}
+            run.stats = {
+                "fetched": len(postings),
+                "inserted": len(inserted_ids),
+                "full_descriptions": full_text.as_dict(),
+            }
             session.commit()
         except Exception as exc:
             _fail(session, run, exc)
