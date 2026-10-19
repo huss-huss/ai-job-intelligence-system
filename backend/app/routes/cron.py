@@ -10,6 +10,7 @@ from app.config import settings
 from app.database import get_db
 from app.models import Source
 from app.queue import dispatch_scrape
+from app.telegram.config import telegram_settings
 
 router = APIRouter(prefix="/api/cron", tags=["cron"])
 
@@ -29,4 +30,12 @@ async def discover(authorization: str = Header(""), db: AsyncSession = Depends(g
             results.append({"source_id": source.id, "job_id": job_id})
         except Exception as exc:  # one failing source shouldn't stop the others
             results.append({"source_id": source.id, "error": str(exc)[:300]})
-    return {"sources": len(sources), "results": results}
+    response: dict = {"sources": len(sources), "results": results}
+    if telegram_settings.can_send:
+        # Daily Telegram digest rides on this run (Vercel Hobby allows one cron a day). It never raises.
+        from starlette.concurrency import run_in_threadpool
+
+        from app.telegram.digest import run_digest
+
+        response["telegram"] = await run_in_threadpool(run_digest)
+    return response
