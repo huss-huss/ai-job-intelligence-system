@@ -136,13 +136,14 @@ python -m worker.cli discover --sources sources.example.yaml --json results.json
 ### Telegram alerts
 
 A Telegram bot sends you the day's best new matches and lets you track them from the chat. It talks
-to the Bot API directly over httpx (`backend/app/telegram/`) and only ever answers your own chat.
+to the Bot API directly over httpx (`backend/app/telegram/`) and only answers your own chat and the people
+you invite (see [Multi-user](#multi-user)).
 
 **Daily digest.** At the end of the daily cron run (`GET /api/cron/discover`, so no extra cron is
-needed) FirstFetch sends up to `TELEGRAM_DIGEST_SIZE` (5) jobs that were stored in the last
-`TELEGRAM_DIGEST_MAX_AGE_DAYS` (7) days, are eligible or of unknown eligibility, nobody acted on yet, were
-never sent before, and score at least `TELEGRAM_DIGEST_MIN_SCORE` (60, after the feedback adjustment
-below). The score is the analysis `rank` when the scorer provides one, else the match score. Each job is
+needed) FirstFetch sends every user who hasn't paused it their own digest: up to `TELEGRAM_DIGEST_SIZE` (5) jobs that were stored in the last
+`TELEGRAM_DIGEST_MAX_AGE_DAYS` (7) days, are eligible or of unknown eligibility for *their* profile, they haven't acted
+on yet, were never sent to them before, and score at least `TELEGRAM_DIGEST_MIN_SCORE` (60, after their
+feedback adjustment below) on their own score: `rank` (fit × hire probability) when present, else fit. Each job is
 one message: title, company, location, score (and hire probability when present), the top two reasons and
 an apply link, with buttons **✅ Applied · ⭐ Save · 👎 Not for me · 🔗 Open**. Tapping a button updates the
 tracker and redraws the message with the new status (↩️ Undo resets it). A job is marked as sent only after
@@ -151,9 +152,31 @@ the bot sends one line, "No new strong matches today"; set `TELEGRAM_DIGEST_SEND
 Telegram errors never fail the cron run: they're logged and recorded in a `telegram` row in run history.
 In Redis mode, jobs analyzed after the cron request finishes go out in the next day's digest.
 
-**Commands:** `/top` (best 5 open matches you haven't acted on), `/today` (stored since yesterday),
-`/applied` (tracked jobs with status and notes), `/stats` (pipeline counts), `/pause` and `/resume` (the
-digest), `/status <job id> <status>` (e.g. `/status 42 interviewing`), `/help`.
+**Commands** (each user works on their own profile, tracker and digest):
+
+| Command | What it does |
+|---|---|
+| `/top` | your best 5 open matches you haven't acted on (last 30 days) |
+| `/today` | jobs stored since yesterday, with your scores |
+| `/applied` | your tracked jobs with status and notes |
+| `/stats` | pipeline counts, your eligibility split and tracker |
+| `/status <job id> <status>` | e.g. `/status 42 interviewing` |
+| `/pause`, `/resume` | your daily digest |
+| `/profile` | your profile: titles, skills, seniority, country, salary, employment types |
+| `/skills add\|remove <skill> [weight]` | weight 1 (nice to have) to 3 (core), default 2 |
+| `/titles add\|remove <title>` | target job titles, e.g. `/titles add platform engineer` |
+| `/salary <min USD/yr>` | `30000`, `30k` or `none` |
+| `/country <name> [ISO code]` | e.g. `/country Kenya ke`; updates the locations you count as eligible |
+| `/seniority <levels>` | any of intern, junior, mid, senior, lead, e.g. `mid,senior` |
+| `/employment <types>` | full_time, part_time, contract, internship, optional weights: `full_time,contract:0.6` |
+| `/dashboard` | a private dashboard link with your statuses (shown once; `/dashboard revoke` turns it off) |
+| `/help` | the list above |
+| `/invite` | owner only: a single-use invite link, valid 48 h |
+| `/users` | owner only: who has access |
+| `/remove <user id>` | owner only: remove a member and delete their data |
+
+Profile edits are validated by the same `CandidateProfile` model the worker uses, and rescore your jobs
+from the last 30 days right away, so `/top` reflects the change.
 
 The client keeps under Telegram's limits: requests are spaced to stay under 30 messages a second, a 429 is
 retried after the `retry_after` Telegram asks for (up to 30 s, three times), messages are HTML with every
@@ -190,7 +213,8 @@ field escaped, and lists longer than 4096 characters are split between whole lin
 
 The webhook (`POST /api/telegram/webhook`) only accepts requests carrying the secret in Telegram's
 `X-Telegram-Bot-Api-Secret-Token` header (compared in constant time). That header is also the only way
-past the `ADMIN_TOKEN` write lock, and only for this one path. Updates from any other chat are ignored.
+past the `ADMIN_TOKEN` write lock, and only for this one path. Updates from any chat that isn't a user are
+ignored without a reply, except an invite code (see [Multi-user](#multi-user)).
 
 | Variable | Default | |
 |---|---|---|
@@ -202,20 +226,107 @@ past the `ADMIN_TOKEN` write lock, and only for this one path. Updates from any 
 | `TELEGRAM_DIGEST_MAX_AGE_DAYS` | 7 | only jobs stored within this many days |
 | `TELEGRAM_DIGEST_SEND_EMPTY` | true | send "no new strong matches" |
 | `TELEGRAM_TIMEZONE` | Africa/Addis_Ababa | times shown in messages |
+| `TELEGRAM_DASHBOARD_URL` | | the dashboard's URL, for the personal links `/dashboard` sends |
+| `TELEGRAM_DIGEST_MAX_SECONDS` | 90 | stop sending digests (to the remaining users) after this long |
+
+Members can override the digest size and minimum score per user (`users.digest_size`,
+`users.digest_min_score`); without an override they use the values above.
+
+### Multi-user
+
+FirstFetch is invite-only. The owner is whoever `TELEGRAM_CHAT_ID` and `ADMIN_TOKEN` belong to; they can
+invite a few friends, each of whom gets their own profile, scores, tracker, feedback, talent-network
+progress and daily digest. Nobody else can use the bot.
+
+**Inviting someone**
+
+1. The owner sends `/invite` to the bot. It replies with a link, `https://t.me/<bot>?start=<code>`, and the
+   same code as `/start <code>`. The code is 32 random URL-safe characters (192 bits), works once and
+   expires after 48 hours. Only its SHA-256 is stored; the bot shows it this one time.
+2. The friend opens the link (or sends `/start <code>`) in a private chat with the bot. They become a
+   member, their profile starts as a copy of the owner's, and the owner gets a "… joined" message.
+3. The friend makes the profile theirs with `/profile`, `/skills`, `/titles`, `/salary`, `/country`,
+   `/seniority` and `/employment`. The next digest uses it.
+
+A wrong code gets "invalid, used or expired". Five wrong codes from one chat within 15 minutes lock that
+chat out for an hour (silently: no more replies), and 50 wrong codes across all chats within an hour pause
+redemption for everyone for an hour. With 192-bit codes guessing is hopeless anyway; the throttle keeps it
+cheap. The throttle table stores a hash of the chat id, not the id. At most 20 members.
+
+**Privacy model**
+
+| Data | Who can read it |
+|---|---|
+| jobs, descriptions, the public score (`jobs_analysis`, from the deployment profile) | everyone (portfolio demo) |
+| your statuses, notes, feedback, talent-network progress, your scores, profile | you, in the bot and with your dashboard link |
+| the owner's | the owner (bot, `ADMIN_TOKEN`, or their own dashboard link) |
+| who the users are (`/users`) | the owner |
+
+- `GET /api/applications` and `GET /api/me` answer 401 without a token; `GET /api/talent-networks` returns the
+  platform list without anyone's progress; `GET /api/jobs?status=` needs a token (the filter would reveal what
+  someone applied to), and job payloads never carry tracker fields; telegram runs in `GET /api/runs` show the
+  public only totals. Tests seed every kind of private data for two users and call every GET route
+  (`tests/test_privacy.py`); a new GET route fails that test until it's reviewed.
+- Tokens: `X-Admin-Token: <ADMIN_TOKEN>` is the owner. `X-User-Token` is a personal dashboard token from
+  `/dashboard`: 32 random bytes, stored as SHA-256, shown once, replaced by the next `/dashboard`, revoked by
+  `/dashboard revoke`. It reads and writes only that user's tracker and talent networks; every other write
+  still needs the admin token. All comparisons are constant-time. With no `ADMIN_TOKEN` configured, private
+  data isn't readable over HTTP at all.
+- The dashboard link is `https://<dashboard>/#token=…`. The token is in the URL fragment, which browsers
+  never send to a server; the dashboard moves it to localStorage and strips it from the address bar. Without
+  a token the dashboard is the public view: no status selects, badges or filters, and the talent-network
+  list without progress. "Public view" in the header forgets the token on that browser.
+- Owner-only commands (`/invite`, `/users`, `/remove`) check the role on every call; to a member they are
+  "Unknown command".
+- Logs never contain chat ids, names, invite codes or tokens (errors are logged by type only).
+
+**Data stored per user:** Telegram chat id, the first name Telegram sends (for `/users`), role, profile,
+digest settings and pause flag, join and last-seen times, the hash of their dashboard token; their
+statuses, notes and notification times (`applications`), talent-network statuses, and their score for each
+job (`user_job_scores`: fit, hire probability, rank, eligibility, reasons).
+
+**Removal:** `/remove <id>` (owner only) deletes the member and everything above: profile, tracker, notes,
+feedback, talent-network statuses, scores and dashboard token. Nothing is anonymized and kept; invites they
+used stay as used, without a link to them. Their chat is a stranger again and is ignored. The owner can't be
+removed. Rolling back migration 004 also drops every member's data and keeps the owner's.
+
+**Scoring per user.** Fetching and extracting facts (and LLM calls, when configured) happens once per job.
+Scoring those facts against a profile is rules only, about 1 ms per job, so the analysis run scores each new
+job for every user right after the public score and stores it in `user_job_scores`, with one delete and a
+multi-row insert per batch, so a second user adds no per-job database round trips. A profile edit rescores
+that user's last 30 days; jobs without a row for someone (stored before they joined) are scored the first
+time their digest or `/top` needs them. The owner's profile is the deployment's (`PROFILE_YAML` /
+`PROFILE_PATH` / `profile.example.yaml`) until they edit it in the bot; the LLM pre-filter still uses the
+deployment profile.
+
+Measured on a local Postgres 17 with 1316 synthetic jobs (~4 KB descriptions, rules extractor):
+
+| Step | 1 user | 2 users |
+|---|---|---|
+| analysis of all 1316 jobs | 3.0 s, 2648 SQL statements | 4.1 s, 2646 SQL statements |
+| rescore one user after a profile edit (1316 jobs) | | 1.2 s, 8 SQL statements |
+| catch-up for a new member (1316 jobs) | | 1.2 s, 9 SQL statements |
+| catch-up when nothing is missing | | 2 ms, 1 query |
+| digests (fake Bot API) | | 0.05 s, 12 API calls |
+
+The daily cron analyzes only new jobs, so a second user adds well under a second of scoring plus their
+digest's 2-6 Telegram messages to a run that took 39 s in production.
+
 
 ### Application tracker
 
-Every job can have a status: `new`, `saved`, `applied`, `interviewing`, `offer`, `rejected` or
+Every job can have a status per user: `new`, `saved`, `applied`, `interviewing`, `offer`, `rejected` or
 `not_interested`, plus notes and timestamps (status changed, first applied, sent to Telegram). It's stored in
-the `applications` table (migration `003_tracker`), separate from the scraped data, so re-scraping or
-re-analyzing never touches it. Set it from the Telegram buttons, `/status`, the select on each dashboard
+the `applications` table (one row per user and job, migrations `003_tracker` and `004_multi_user`), separate
+from the scraped data, so re-scraping or re-analyzing never touches it. Set it from the Telegram buttons, `/status`, the select on each dashboard
 card, or the API (`GET /api/applications?status=saved,applied`, `PATCH /api/applications/{job_id}` with
 `{"status": "applied", "notes": "..."}`). The dashboard hides jobs marked "not for me" by default; the
-status filter brings them back. On the public deployment, writes need the admin token (header field on the
-dashboard, kept in your browser's localStorage).
+status filter brings them back. All of it is private: the API needs the admin token or your personal
+dashboard token, and the public dashboard shows no statuses (see [Multi-user](#multi-user)).
 
 **Feedback learning** (`backend/app/tracker.py`) is a small, fixed rule, not a model. When ranking the
-digest and `/top`, each job is compared with the jobs you reacted to. Two jobs are *similar* when they
+digest and `/top`, each job is compared with the jobs you reacted to (yours only; another user's 👎 never
+moves your ranking). Two jobs are *similar* when they
 share at least 2 keywords and their keyword sets overlap by at least half (Jaccard ≥ 0.5); keywords are the
 matched skills plus the title's role words, without seniority and filler words such as "senior" or
 "engineer".
@@ -235,12 +346,15 @@ python)") and the score shows both numbers ("Score 63 (58 + 5 feedback)"). The s
 
 The dashboard's **Talent networks** card lists platforms where one application and one vetting process
 can lead to many remote roles: Andela, Turing, Toptal, micro1, Mercor and Arc.dev, each with a one-line
-description and a link. Your status per platform (not started / applied / vetted / active) is stored in the
-`talent_networks` table; `GET /api/talent-networks`, `PATCH /api/talent-networks/{slug}` with
-`{"status": "vetted"}` (admin token on the public deployment). The descriptions say what each platform is,
+description and a link. Your status per platform (not started / applied / vetted / active) is stored per user
+in the `talent_networks` table; `GET /api/talent-networks` (the list for everyone, your status only with a
+token), `PATCH /api/talent-networks/{slug}` with `{"status": "vetted"}` (token required). The public
+dashboard shows the platform list only. The descriptions say what each platform is,
 not how likely you are to get in.
 
-![Dashboard with tracker statuses and talent networks](docs/screenshots/dashboard-tracker.png)
+| Public view | A member's private view (`/dashboard` link) |
+|---|---|
+| ![Public dashboard: no statuses, talent networks without progress](docs/screenshots/public-dashboard-no-statuses.png) | ![A member's private view with their own statuses](docs/screenshots/private-dashboard-member.png) |
 
 ### Repairing stored text
 
@@ -257,8 +371,8 @@ DATABASE_URL=postgresql://... python -m worker.cli repair-text             # app
 
 ```bash
 pip install pytest ruff
-pytest          # 450 tests, offline: adapters run against trimmed real API responses and saved HTML pages; Telegram against a fake Bot API (httpx.MockTransport); migrations on SQLite
-TEST_DATABASE_URL=postgresql://postgres@localhost:5433/scratch pytest   # +2: eligibility filter (drops and recreates the job tables) and the migrations, in a throwaway schema, on a real Postgres
+pytest          # 527 tests (+3 skipped without Postgres), offline: adapters run against trimmed real API responses and saved HTML pages; Telegram against a fake Bot API (httpx.MockTransport); migrations on SQLite
+TEST_DATABASE_URL=postgresql://postgres@localhost:5433/scratch pytest   # +3: eligibility filter (drops and recreates the job tables) and the migrations (schema and multi-user data migration), in a throwaway schema, on a real Postgres
 ruff check worker tests
 ```
 
@@ -367,6 +481,7 @@ docker compose -f infra/docker-compose.yml up -d --build
 | PATCH | /api/applications/{job_id} | Set status and/or notes (token required) |
 | GET | /api/talent-networks | Talent-network catalog; your status only with a token |
 | PATCH | /api/talent-networks/{slug} | Set your status for one network (token required) |
+| GET | /api/me | Whose token this is (role, name). Token required |
 | POST | /api/telegram/webhook | Telegram updates (secret header required) |
 
 `eligible` filters on the stored location eligibility: `any` (default), or a comma-separated subset of `true`, `false`, `unknown`. Jobs whose posting doesn't say who can apply, or that aren't analyzed yet, count as `unknown`. The dashboard requests `eligible=true,unknown` and reads the size of the hidden set from `eligible=false&page_size=1`.
@@ -419,7 +534,29 @@ notes and talent-network progress are private everywhere: they're only returned 
 alerts add `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET` and `TELEGRAM_CHAT_ID` (see
 [Telegram alerts](#telegram-alerts)), and run `alembic upgrade head` once for the tracker tables.
 
+### Upgrading to multi-user (migration 004)
+
+Run it once, from a shell that has the owner's values, so the owner row gets them:
+
+```bash
+read -rs TELEGRAM_CHAT_ID && export TELEGRAM_CHAT_ID       # optional: filled in on the bot's first update too
+export PROFILE_YAML="$(cat profile.yaml)"                  # optional: without it the owner keeps the deployment profile
+DATABASE_URL=<unpooled url> alembic -c backend/alembic.ini upgrade head
+vercel env add TELEGRAM_DASHBOARD_URL production           # e.g. https://firstfetch-eight.vercel.app, for /dashboard
+vercel deploy --prod
+python -m worker.cli telegram-setup --url https://<your-api-project>.vercel.app   # refreshes the command menu
+```
+
+The migration creates the owner, moves every existing status, note, talent-network status and the pause
+flag to them, and makes statuses unique per (user, job). It's reversible (`alembic downgrade 003_tracker`),
+which keeps the owner's rows and deletes members'. The owner's scores are filled in on the first digest or
+`/top` (about a second for 1300 jobs).
+
 ## Limitations and next steps
+
+- The dashboard always shows the public score; each user's own scores drive their Telegram digest, `/top`
+  and `/today`, but aren't on the dashboard yet. The LLM pre-filter (which jobs get an LLM extraction) uses
+  the deployment profile, not each member's.
 
 - Full descriptions depend on the job board serving the posting page to a non-browser client. As of October 2026, RemoteOK answers with a redirect loop and Himalayas with a Cloudflare challenge (HTTP 403), so on those boards the excerpt is usually kept (`failed` and `skipped_host` in the run stats). FirstFetch doesn't try to get around bot protection. Most RemoteOK and Himalayas API descriptions are already complete; only the short ones are fetched.
 - Pages are only fetched for postings that aren't stored yet, so rows saved before this feature keep their excerpts.
