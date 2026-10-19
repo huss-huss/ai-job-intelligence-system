@@ -118,7 +118,19 @@ def parse_callback(data: str | None) -> tuple[int, str] | None:
     return (int(match.group(1)), match.group(2)) if match else None
 
 
-def job_keyboard(job_id: int, url: str | None, status: str) -> dict:
+def cover_callback_data(job_id: int) -> str:
+    data = f"c:{job_id}"
+    assert len(data.encode()) <= MAX_CALLBACK_DATA_BYTES
+    return data
+
+
+def parse_cover_callback(data: str | None) -> int | None:
+    match = re.fullmatch(r"c:(\d{1,12})", data or "")
+    return int(match.group(1)) if match else None
+
+
+def job_keyboard(job_id: int, url: str | None, status: str, *, cover: bool = False) -> dict:
+    """Status buttons; then Open, ✍️ Cover letter (when AI is on) and Undo."""
     row = [
         {"text": f"{label} ✓" if status == value else label, "callback_data": callback_data(job_id, value)}
         for value, label in BUTTONS
@@ -127,6 +139,8 @@ def job_keyboard(job_id: int, url: str | None, status: str) -> dict:
     second = []
     if safe_url(url):
         second.append({"text": "🔗 Open", "url": safe_url(url)})
+    if cover:
+        second.append({"text": "✍️ Cover letter", "callback_data": cover_callback_data(job_id)})
     if status != "new":
         second.append({"text": "↩️ Undo", "callback_data": callback_data(job_id, "new")})
     if second:

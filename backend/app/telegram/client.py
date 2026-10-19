@@ -60,6 +60,7 @@ class TelegramClient:
             raise ValueError("TELEGRAM_BOT_TOKEN is not set")
         self._token = token
         self._base = f"{api_base.rstrip('/')}/bot{token}"
+        self._file_base = f"{api_base.rstrip('/')}/file/bot{token}"
         self._http = httpx.Client(timeout=timeout, transport=transport)
         self.min_interval = min_interval
         self.max_retries = max_retries
@@ -173,3 +174,25 @@ class TelegramClient:
 
     def get_me(self) -> dict:
         return self.call("getMe")
+
+    def get_file(self, file_id: str) -> dict:
+        """{"file_id", "file_size", "file_path"}; the path is valid for an hour."""
+        return self.call("getFile", file_id=file_id)
+
+    def download_file(self, file_path: str, *, max_bytes: int = 20_000_000) -> bytes:
+        """The file's bytes from https://api.telegram.org/file/bot<token>/<file_path>."""
+        self._throttle()
+        self.calls.append("downloadFile")
+        url = f"{self._file_base}/{file_path.lstrip('/')}"
+        try:
+            with self._http.stream("GET", url) as resp:
+                if resp.status_code != 200:
+                    raise TelegramError("downloadFile", f"HTTP {resp.status_code}", resp.status_code)
+                data = b""
+                for part in resp.iter_bytes():
+                    data += part
+                    if len(data) > max_bytes:
+                        raise TelegramError("downloadFile", f"file is over {max_bytes} bytes")
+                return data
+        except httpx.HTTPError as exc:
+            raise TelegramError("downloadFile", self._redact(f"{type(exc).__name__}: {exc}")) from None

@@ -21,7 +21,7 @@ from sqlalchemy.orm import Session
 
 from app import tracker, users
 from app.models import User
-from app.telegram import profile_cmds
+from app.telegram import ai_cmds, profile_cmds
 from app.telegram.client import TelegramClient
 from app.telegram.config import TelegramSettings
 from app.telegram.render import (
@@ -32,6 +32,7 @@ from app.telegram.render import (
     job_card,
     job_keyboard,
     parse_callback,
+    parse_cover_callback,
     safe_url,
     zone,
 )
@@ -54,6 +55,8 @@ COMMANDS = [
     ("seniority", "/seniority <levels>, e.g. mid,senior"),
     ("employment", "/employment <types>, e.g. full_time,contract"),
     ("dashboard", "A private link to your statuses on the dashboard"),
+    ("cover", "/cover <job id>: a cover letter for a job, from your resume"),
+    ("cv", "Your resume (CV) for cover letters: paste it after /cv or upload a file"),
     ("help", "What the bot can do"),
 ]
 OWNER_COMMANDS = [
@@ -80,6 +83,7 @@ class Ctx:
     user: User
     chat_id: str
     now: datetime
+    text: str = ""  # the whole message, for commands that take free text (/resume)
 
     def send(self, text: str, **kw) -> dict:
         return self.client.send_message(self.chat_id, text, **kw)
@@ -129,8 +133,10 @@ def send_cards(
     """One message per job, with buttons. Marks each as notified (for this user) once Telegram accepted it."""
     tz = zone(settings.timezone)
     sent = 0
+    cover = ai_cmds.ai_enabled()
     for c in cands:
-        client.send_message(chat_id, job_card(c, tz), reply_markup=job_keyboard(c.job.id, c.job.url, c.status))
+        keyboard = job_keyboard(c.job.id, c.job.url, c.status, cover=cover)
+        client.send_message(chat_id, job_card(c, tz), reply_markup=keyboard)
         tracker.mark_notified(session, user.id, c.job.id, now)
         session.commit()  # a later failure must not make this job look unsent
         sent += 1
@@ -220,6 +226,7 @@ def cmd_stats(ctx: Ctx, _args) -> None:
             f"{fmt_time(run['started_at'], zone(ctx.settings.timezone))}"
         )
     lines.append(f"Digest: {'paused' if is_paused(ctx.user) else 'on'}")
+    lines += [esc(line) for line in ai_cmds.stats_lines(ctx)]
     ctx.send("\n".join(lines))
 
 
@@ -347,6 +354,8 @@ HANDLERS = {
     "status": cmd_status,
     "profile": cmd_profile,
     "dashboard": cmd_dashboard,
+    "cover": ai_cmds.cmd_cover,
+    "cv": ai_cmds.cmd_cv,  # /resume is taken: it resumes the digest
     **{name: _edit(name) for name in profile_cmds.EDITS},
 }
 OWNER_HANDLERS = {"invite": cmd_invite, "users": cmd_users, "remove": cmd_remove}
@@ -365,6 +374,11 @@ def _command(text: str) -> tuple[str, list[str]] | None:
 
 def handle_callback(ctx: Ctx, query: dict) -> str:
     message = query.get("message") or {}
+    cover_job = parse_cover_callback(query.get("data"))
+    if cover_job is not None:
+        # Answer first: Telegram shows a spinner on the button until the query is answered.
+        ctx.client.answer_callback_query(query["id"], "Writing your cover letter…")
+        return ai_cmds.write_cover_letter(ctx, cover_job)
     parsed = parse_callback(query.get("data"))
     if not parsed or parsed[1] not in tracker.STATUSES:
         ctx.client.answer_callback_query(query["id"], "Unknown button")
@@ -383,7 +397,7 @@ def handle_callback(ctx: Ctx, query: dict) -> str:
             message["chat"]["id"],
             message["message_id"],
             job_card(cand, zone(ctx.settings.timezone), status=app.status, changed_at=app.status_changed_at),
-            reply_markup=job_keyboard(job_id, cand.job.url, app.status),
+            reply_markup=job_keyboard(job_id, cand.job.url, app.status, cover=ai_cmds.ai_enabled()),
         )
     return f"callback:{status}"
 
@@ -456,9 +470,13 @@ def handle_update(
         return handle_stranger(session, client, settings, chat_id, message or {}, now)
 
     user.last_seen = now
-    ctx = Ctx(session, client, settings, user, chat_id, now)
+    ctx = Ctx(session, client, settings, user, chat_id, now, text=(message or {}).get("text") or "")
     if query:
         return handle_callback(ctx, query)
+    if (message or {}).get("document"):
+        result = ai_cmds.handle_document(ctx, message["document"])
+        session.commit()
+        return result
 
     parsed = _command((message or {}).get("text") or "")
     if not parsed:
