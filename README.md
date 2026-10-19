@@ -32,15 +32,15 @@ runtime 47.1 s
 ## How it works
 
 ```text
- sources ──► fetch ──► dedupe ──► rules extract ──► pre-score ──► LLM extract* ──► score ──► Postgres / Notion / webhook
- (11 APIs +   (retry,   (per source   (skills,          (cheap)       (*only jobs      (0-100 with
-  Playwright) throttle) + across      seniority,                       that pre-score   reasons)
-                        boards)       salary, risks)                   ≥ 35)
+ sources ──► fetch ──► dedupe ──► rules extract ──► score ──► Postgres / Notion / webhook ──► LLM extract* ──► rescore
+ (11 APIs +   (retry,   (per source   (skills,          (0-100 with                           (*once a day: the
+  Playwright) throttle) + across      seniority,         reasons)                              day's top 30 by rules
+                        boards)       salary, risks)                                           rank, within budget)
 ```
 
 - **Sources** (`worker/sources/`): FreeHire, Djinni, We Work Remotely, Jobicy, Working Nomads, Remotive, RemoteOK, Arbeitnow, Himalayas, any Greenhouse or Lever careers board, plus an opt-in Playwright scraper for sites without an API (see [Sources](#sources) for each one's terms and limits). All requests go through one HTTP client with throttling, exponential backoff with jitter, `Retry-After` support, and pacing on `X-RateLimit-Remaining`/`X-RateLimit-Reset` when an API sends them.
 - **Full descriptions** (`worker/sources/fulltext.py`): RemoteOK and Himalayas sometimes return only an excerpt, which under-counts skills. When a new posting from those sources has a description shorter than `FULL_DESCRIPTION_MIN_CHARS` (1500), FirstFetch fetches the posting page and uses the JSON-LD `JobPosting.description` if the page has one, or else the block holding most of the page's text, with navigation, sidebars, footers and link lists left out. Page fetches use the same throttled client, identify as `FirstFetch/…`, check `robots.txt` (cached per host, `Crawl-delay` honored) and stop trying a host after two failures in a row. The API text is kept whenever a fetch fails or the page has less text. Each scrape run has a budget, `FULL_DESCRIPTION_MAX_PAGES` (10) and `FULL_DESCRIPTION_MAX_SECONDS` (20), so the daily serverless run stays well inside its time limit. Each run's stats show `full_descriptions: {candidates, fetched, failed, skipped, ...}`. Set `FULL_DESCRIPTION_MIN_CHARS=0` to turn it off, `FULL_DESCRIPTION_SOURCES` to change which sources are fetched, or `"full_descriptions": true/false` in a source's config to override one source. Use `discover --no-full-descriptions` to skip it from the CLI.
-- **Extraction** (`worker/ai.py`): keyword rules by default. With `OPENAI_API_KEY`, or `LLM_BASE_URL` pointing at any OpenAI-compatible server such as Ollama, a strict JSON schema is sent and the reply is validated with Pydantic. Any failure falls back to rules instead of failing the run. Token usage is recorded per job.
+- **Extraction** (`worker/ai.py`): keyword rules for every job. With `OPENAI_API_KEY` (or `LLM_BASE_URL` pointing at an OpenAI-compatible server such as Ollama), the day's best jobs by rules rank are also read by the model, with a strict JSON schema validated by Pydantic, inside a hard monthly budget. Any failure falls back to rules, with a warning, instead of failing the run. See [AI features and budget](#ai-features-and-budget).
 - **Scoring** (`worker/matching.py`): deterministic, so it's testable and auditable. The LLM supplies facts; it doesn't decide the score.
 
   | Component | Points | Notes |
@@ -87,7 +87,7 @@ Every source accepts `max_age_days` (drop older postings) and `max_results`. `so
 The fit score says whether a job is right for you. Hire probability (`worker/hire.py`) says whether applying is likely to pay off. Each factor is 0–1 and gets a reason:
 
 ```text
-hire_probability = 100 × eligibility × timezone × language × (Σ weight × factor / 100)
+hire_probability = 100 × eligibility × timezone × language × risk × (Σ weight × factor / 100)
 rank             = round(100 × √(fit/100 × hire_probability/100))
 ```
 
@@ -95,8 +95,9 @@ Gates multiply because any one of them can make an application pointless; the we
 
 | Factor | Kind | Value |
 |---|---|---|
-| Eligibility certainty | gate | 1.0 explicitly worldwide / anywhere / global / Africa / your country (location text, or FreeHire `regions`/`countries`); 0.9 EMEA; 0.75 MENA (Ethiopia isn't always counted in it); 0.85 posting silent but FreeHire lists the company as hiring remotely in Africa; 0.9 another of your `eligible_terms`; 0.5 bare "Remote"; 0.02 not open to your location (same verdict as the fit score) |
+| Eligibility certainty | gate | 1.0 explicitly worldwide / anywhere / global / Africa / your country (location text, or FreeHire `regions`/`countries`); 0.9 when the LLM read an explicit "worldwide" or your region in the posting ("AI read: …"); 0.9 EMEA; 0.75 MENA (Ethiopia isn't always counted in it); 0.85 posting silent but FreeHire lists the company as hiring remotely in Africa; 0.9 another of your `eligible_terms`; 0.5 bare "Remote"; 0.02 not open to your location (same verdict as the fit score) |
 | Timezone | gate | stated requirements in the location, timezone note or description ("US time zones only", "CET ±2h", "UTC-3 to UTC+3", "overlap with EST", which adds 4 h of slack) against `timezone`: 1.0 inside the window, 0.75 within 2 h, 0.45 within 4 h, 0.25 within 6 h, else 0.1; 1.0 when nothing is stated |
+| Risk | gate | the lowest of the posting's risk flags (rules or LLM): not a real job or asks you to pay 0.1, unpaid 0.3, commission only 0.5; else 1.0 (a vague description only costs fit points) |
 | Language | gate | 0.1 if another language is required ("fluent German", "French is a must", "Japanese-speaking"; "… is a plus" doesn't count) and it isn't in `languages`; 0.35 if the posting itself isn't in English (source field, or script/stopword detection); else 1.0 |
 | Competition | weight 30 | pressure = applicants + views/20; factor = 1 / (1 + 4 × pressure / `max_competition`), floor 0.1. With the default 50: 0 → 1.0, 12.5 → 0.5, 25 → 0.33, 50 → 0.2. Unknown (most boards) 0.5 |
 | Freshness | weight 30 | 1.0 for the first 48 h, then halves every 5 days (7 days ≈ 0.5, 12 days ≈ 0.25), floor 0.05; unknown date 0.4. FreeHire postings whose date the source keeps restating (`fake_freshness`) are dated from when FreeHire first saw them |
@@ -115,6 +116,114 @@ location: {country: Ethiopia, country_code: et}
 ```
 
 The worker stores `extracted_json.hire` (`score`, `factors`, `reasons`), `extracted_json.hire_probability` and `extracted_json.rank` (both 0–100) next to `match`; `score` stays the 0–1 fit score. `GET /api/jobs?sort=rank` orders by rank, then fit. The dashboard's `ScoreDetails` mirrors the weights above.
+
+## AI features and budget
+
+Two optional features use an OpenAI model, both through one budgeted caller (`worker/llm.py`, `worker/budget.py`):
+
+1. **Extraction** of job facts for the day's best jobs: who may apply (`location_restriction`, `worldwide`), seniority,
+   employment type, timezone requirement, minimum years, risk flags. They feed the fit score and
+   [hire probability](#hire-probability-and-rank). When the model's reading changes eligibility, the job says so:
+   *AI read: applicants must be in the United States* or *AI read: open to applicants worldwide*. The model can settle
+   an unknown ("Remote") either way and catch a restriction the rules missed, but never re-opens a job the rules found
+   restricted.
+2. **Cover letters** in Telegram: the **✍️ Cover letter** button under every digest and `/top` card, or
+   `/cover <job id>`. The letter is written from your resume (`/cv`: paste the text, or upload a .txt, .md or .pdf;
+   the owner can also run `python -m worker.cli set-resume resume.pdf`), the job's title, company and description, and
+   your profile. The prompt asks for at most 220 words tied to the job's stated requirements, a professional tone
+   without clichés, plain text you can paste, and above all honesty: nothing that isn't in the resume, and nothing
+   claimed that the resume doesn't show (`worker/cover_letter.py`, `HONESTY_RULES`). The letter is sent to you and not
+   stored; only the usage row (tokens and cost) is. (`/resume` already resumes the digest, so the resume command is
+   `/cv`.)
+
+**Models and prices** (`MODEL_PRICES` in `worker/llm.py`, from the
+[OpenAI pricing page](https://developers.openai.com/api/docs/pricing) on 2026-10-19):
+
+| Model | Input / 1M tokens | Output / 1M tokens | Used for |
+|---|---|---|---|
+| `gpt-6-luna` | $0.10 | $0.50 | both features (default) |
+| `gpt-4.1-mini` | $0.40 | $1.60 | fallback, only if `gpt-6-luna` isn't available on the key (404/403) |
+
+Reasoning tokens are billed as output and count against the output cap. Cached-input discounts are ignored, so
+recorded costs are an upper bound. `LLM_PRICES_JSON='{"model": [0.1, 0.5]}'` adds or corrects a price; a model with no
+known price is refused rather than guessed (a non-OpenAI `LLM_BASE_URL`, e.g. Ollama, counts as free).
+
+**Model parameters.** Each model gets only what it accepts (`MODEL_CAPS`): `gpt-6-luna` gets no `temperature`,
+`max_completion_tokens` and `reasoning_effort: "low"` (`LLM_REASONING_EFFORT` overrides it); `gpt-4.1-mini` gets
+`temperature` and `max_completion_tokens`; unknown models (local servers) get the classic `max_tokens`. If the API
+still answers 400 "unsupported parameter", the call is retried once without it (or with the other token parameter),
+and the process remembers that for the model. The installed SDK (`openai==1.55.3`) has no Responses API and no
+`reasoning_effort` keyword, so calls use chat completions with a `json_schema` `response_format`, and
+`reasoning_effort` is sent in `extra_body`. SDK retries are off: every retry would be another billable request.
+
+**The budget guard** is local and hard, independent of the limit on the OpenAI account. Before every call it estimates
+the worst case (input estimated at 3 characters per token, which over-counts, plus the whole output cap) and, in one
+locked transaction (a Postgres advisory lock), refuses if
+
+- month-to-date cost (UTC calendar month) + the estimate would exceed `LLM_MONTHLY_BUDGET_USD`, or
+- today's extractions (all users) reached `LLM_MAX_EXTRACTIONS_PER_DAY`, or
+- your cover letters today reached `LLM_MAX_COVER_LETTERS_PER_DAY`,
+
+and otherwise reserves the estimate in `llm_usage`. After the call the reservation is replaced by the usage the API
+reports (input, output and reasoning tokens). A rejected request (4xx, not billed) is deleted; a timeout keeps the
+estimate, since OpenAI may have billed it. A refused cover letter gets a friendly reply ("You've reached today's
+limit of 5 cover letters…", or "This month's AI budget is used up…"); a refused or failed extraction keeps the rules
+facts, logs a warning and is counted under `llm_fallbacks` in the run stats.
+
+**Which jobs get extraction.** Every job is scored by rules first. Once a day, after all sources are scraped (the
+same cron request), `run_llm_enrich_task` takes the jobs of the last 36 hours that only have rules facts, sorts them by
+rules rank, and sends the top N, where N is what's left of today's extraction cap; jobs with a zero fit (excluded
+titles) never go. Four calls run at once (`LLM_CONCURRENCY`), none starts after `LLM_ENRICH_MAX_SECONDS` (75), and each
+enriched job is rescored for the public profile and every user. A job whose call failed or returned invalid output
+isn't tried again. The run is a `llm_enrich` row in run history with tokens, cost, fallbacks and month-to-date spend.
+`python -m worker.cli llm-enrich` runs the same step by hand; `discover` from the CLI does the same top-N selection,
+with its ledger in the database when `DATABASE_URL` is set and otherwise in `LLM_USAGE_FILE`.
+
+**`/stats`** ends with the AI lines. The owner sees the month's spend against the budget, split by feature, and
+today's extraction and cover-letter counts for everyone; a member sees only their own cover letters today.
+
+| Variable | Default | |
+|---|---|---|
+| `OPENAI_API_KEY` | | without it (and without `LLM_BASE_URL`) every AI feature is off and nothing is called |
+| `OPENAI_MODEL` | `gpt-6-luna` | |
+| `LLM_FALLBACK_MODEL` | `gpt-4.1-mini` | used only when `OPENAI_MODEL` isn't available on the key; empty turns it off |
+| `LLM_MONTHLY_BUDGET_USD` | `0.80` | hard local cap per UTC month, under the $1 limit set on the OpenAI account |
+| `LLM_MAX_EXTRACTIONS_PER_DAY` | `30` | all users together; also the N in "top N jobs a day" |
+| `LLM_MAX_COVER_LETTERS_PER_DAY` | `5` | per user |
+| `LLM_REASONING_EFFORT` | | override the model's default (`low` for `gpt-6-luna`), e.g. `minimal` |
+| `LLM_PRICES_JSON` | | extra or corrected prices |
+| `LLM_TIMEOUT_SECONDS`, `LLM_CONCURRENCY`, `LLM_ENRICH_MAX_SECONDS` | `30`, `4`, `75` | |
+| `LLM_BASE_URL` | | an OpenAI-compatible server instead of OpenAI (not billed) |
+| `LLM_USAGE_FILE` | `.firstfetch/llm_usage.json` | ledger for CLI `discover` without a database |
+
+**Monthly cost estimate** with `gpt-6-luna` (prices above):
+
+| | Input tokens | Output tokens (incl. reasoning) | Per call | Per month |
+|---|---|---|---|---|
+| extraction, typical | ~2,000 (system prompt ~190, schema ~630, posting up to 6,000 characters) | ~400 | 2,000 × $0.10/1M + 400 × $0.50/1M = **$0.0004** | 30 × 31 = 930 calls → **$0.37** |
+| extraction, reserved worst case | ≤ 3,152 (over-estimate) | 1,000 (the cap) | $0.000315 + $0.0005 = $0.00082 | 930 → $0.76 |
+| cover letter, typical | ~3,300 (resume up to 8,000 characters, job up to 5,000) | ~500 | $0.00033 + $0.00025 = **$0.0006** | 2 a day → 62 → **$0.04** |
+| cover letter, reserved worst case | ≤ 4,890 | 1,400 (the cap) | $0.00049 + $0.0007 = $0.0012 | 5 a day per user → 155 → $0.18 |
+
+A typical month is about **$0.41**. The worst cases can't all happen: the guard stops every call once the month
+reaches $0.80, which leaves $0.20 of headroom under the account's $1 limit. With `gpt-4.1-mini` as the fallback the
+same month costs about 3.6 times as much, so the budget, not the caps, would end AI use for the month early; that's
+the intended behaviour.
+
+**Checking quality** (once, before relying on it): `llm-eval` picks 20 recent stored jobs, a mix of eligible / not
+open to you / unknown, extracts each with rules and with the model, and prints where they disagree (eligibility,
+seniority, employment type, risk flags) with the total tokens and cost. Its usage counts toward the monthly budget,
+not the daily extraction cap.
+
+```bash
+DATABASE_URL=<unpooled url> python -m worker.cli llm-eval --jobs 20 --dry-run   # estimate only, nothing is sent
+read -rs OPENAI_API_KEY && export OPENAI_API_KEY
+DATABASE_URL=<unpooled url> OPENAI_MODEL=gpt-6-luna python -m worker.cli llm-eval --jobs 20 --run
+```
+
+The dry run prints a typical and a worst-case cost. For 20 full-length (6,000-character) postings that's about
+$0.010 and $0.016; both use the over-counted input estimate, so the real bill is lower (about $0.008 at full length,
+less for shorter postings). `--run` refuses if the worst case would go over what's left of the month's budget.
 
 ## Quick start (no database)
 
@@ -145,7 +254,7 @@ needed) FirstFetch sends every user who hasn't paused it their own digest: up to
 on yet, were never sent to them before, and score at least `TELEGRAM_DIGEST_MIN_SCORE` (60, after their
 feedback adjustment below) on their own score: `rank` (fit × hire probability) when present, else fit. Each job is
 one message: title, company, location, score (and hire probability when present), the top two reasons and
-an apply link, with buttons **✅ Applied · ⭐ Save · 👎 Not for me · 🔗 Open**. Tapping a button updates the
+an apply link, with buttons **✅ Applied · ⭐ Save · 👎 Not for me · 🔗 Open** (and **✍️ Cover letter** when AI is on). Tapping a button updates the
 tracker and redraws the message with the new status (↩️ Undo resets it). A job is marked as sent only after
 Telegram accepted it, so nothing is sent twice and a failed send is retried the next day. With nothing new
 the bot sends one line, "No new strong matches today"; set `TELEGRAM_DIGEST_SEND_EMPTY=false` to skip it.
@@ -159,7 +268,7 @@ In Redis mode, jobs analyzed after the cron request finishes go out in the next 
 | `/top` | your best 5 open matches you haven't acted on (last 30 days) |
 | `/today` | jobs stored since yesterday, with your scores |
 | `/applied` | your tracked jobs with status and notes |
-| `/stats` | pipeline counts, your eligibility split and tracker |
+| `/stats` | pipeline counts, your eligibility split, tracker and AI usage (spend vs budget for the owner) |
 | `/status <job id> <status>` | e.g. `/status 42 interviewing` |
 | `/pause`, `/resume` | your daily digest |
 | `/profile` | your profile: titles, skills, seniority, country, salary, employment types |
@@ -170,6 +279,8 @@ In Redis mode, jobs analyzed after the cron request finishes go out in the next 
 | `/seniority <levels>` | any of intern, junior, mid, senior, lead, e.g. `mid,senior` |
 | `/employment <types>` | full_time, part_time, contract, internship, optional weights: `full_time,contract:0.6` |
 | `/dashboard` | a private dashboard link with your statuses (shown once; `/dashboard revoke` turns it off) |
+| `/cover <job id>` | a cover letter for that job from your resume (also the ✍️ button under each job; needs `OPENAI_API_KEY`) |
+| `/cv [text]` | your resume for cover letters: paste it after `/cv`, or upload a .txt, .md or .pdf file; `/cv delete` removes it |
 | `/help` | the list above |
 | `/invite` | owner only: a single-use invite link, valid 48 h |
 | `/users` | owner only: who has access |
@@ -259,6 +370,7 @@ cheap. The throttle table stores a hash of the chat id, not the id. At most 20 m
 |---|---|
 | jobs, descriptions, the public score (`jobs_analysis`, from the deployment profile) | everyone (portfolio demo) |
 | your statuses, notes, feedback, talent-network progress, your scores, profile | you, in the bot and with your dashboard link |
+| your resume (`/cv`) | you, in the bot (only sent to the model for your own cover letters; no API route returns it) |
 | the owner's | the owner (bot, `ADMIN_TOKEN`, or their own dashboard link) |
 | who the users are (`/users`) | the owner |
 
@@ -281,13 +393,15 @@ cheap. The throttle table stores a hash of the chat id, not the id. At most 20 m
 - Logs never contain chat ids, names, invite codes or tokens (errors are logged by type only).
 
 **Data stored per user:** Telegram chat id, the first name Telegram sends (for `/users`), role, profile,
-digest settings and pause flag, join and last-seen times, the hash of their dashboard token; their
+digest settings and pause flag, join and last-seen times, the hash of their dashboard token, the resume they
+sent with `/cv` (cover letters themselves are never stored); their
 statuses, notes and notification times (`applications`), talent-network statuses, and their score for each
 job (`user_job_scores`: fit, hire probability, rank, eligibility, reasons).
 
-**Removal:** `/remove <id>` (owner only) deletes the member and everything above: profile, tracker, notes,
-feedback, talent-network statuses, scores and dashboard token. Nothing is anonymized and kept; invites they
-used stay as used, without a link to them. Their chat is a stranger again and is ignored. The owner can't be
+**Removal:** `/remove <id>` (owner only) deletes the member and everything above: profile, resume, tracker,
+notes, feedback, talent-network statuses, scores and dashboard token. Invites they used stay as used, and their
+AI usage rows (date, model, token counts and cost, nothing they wrote) stay so the month's spend stays correct,
+both without a link to them. Their chat is a stranger again and is ignored. The owner can't be
 removed. Rolling back migration 004 also drops every member's data and keeps the owner's.
 
 **Scoring per user.** Fetching and extracting facts (and LLM calls, when configured) happens once per job.
@@ -296,8 +410,8 @@ job for every user right after the public score and stores it in `user_job_score
 multi-row insert per batch, so a second user adds no per-job database round trips. A profile edit rescores
 that user's last 30 days; jobs without a row for someone (stored before they joined) are scored the first
 time their digest or `/top` needs them. The owner's profile is the deployment's (`PROFILE_YAML` /
-`PROFILE_PATH` / `profile.example.yaml`) until they edit it in the bot; the LLM pre-filter still uses the
-deployment profile.
+`PROFILE_PATH` / `profile.example.yaml`) until they edit it in the bot; the choice of which jobs get LLM
+extraction still uses the deployment profile's rank.
 
 Measured on a local Postgres 17 with 1316 synthetic jobs (~4 KB descriptions, rules extractor):
 
@@ -371,8 +485,8 @@ DATABASE_URL=postgresql://... python -m worker.cli repair-text             # app
 
 ```bash
 pip install pytest ruff
-pytest          # 527 tests (+3 skipped without Postgres), offline: adapters run against trimmed real API responses and saved HTML pages; Telegram against a fake Bot API (httpx.MockTransport); migrations on SQLite
-TEST_DATABASE_URL=postgresql://postgres@localhost:5433/scratch pytest   # +3: eligibility filter (drops and recreates the job tables) and the migrations (schema and multi-user data migration), in a throwaway schema, on a real Postgres
+pytest          # 583 tests (+4 skipped without Postgres), offline: adapters run against trimmed real API responses and saved HTML pages; Telegram against a fake Bot API and OpenAI against a fake chat-completions API (both httpx.MockTransport, the real openai SDK); migrations on SQLite
+TEST_DATABASE_URL=postgresql://postgres@localhost:5433/scratch pytest   # +4: eligibility filter (drops and recreates the job tables), the migrations (schema, multi-user data migration, LLM budget) and the budget guard's advisory lock, in a throwaway schema, on a real Postgres
 ruff check worker tests
 ```
 
@@ -552,11 +666,32 @@ flag to them, and makes statuses unique per (user, job). It's reversible (`alemb
 which keeps the owner's rows and deletes members'. The owner's scores are filled in on the first digest or
 `/top` (about a second for 1300 jobs).
 
+### AI features (migration 005)
+
+`005_llm_budget` adds the `llm_usage` ledger and `users.resume_text`. It's additive; `alembic downgrade
+004_multi_user` drops the ledger and every stored resume and keeps everything else.
+
+```bash
+DATABASE_URL=<unpooled url> alembic -c backend/alembic.ini upgrade head
+vercel env add OPENAI_API_KEY production                  # prompts for the value
+vercel env add OPENAI_MODEL production                    # gpt-6-luna
+vercel env add LLM_MONTHLY_BUDGET_USD production          # 0.80 (optional: that's the default)
+vercel deploy --prod
+python -m worker.cli telegram-setup --url https://<your-api-project>.vercel.app   # adds /cover and /cv to the menu
+```
+
+Set the $1 monthly limit on the OpenAI project too; the local guard stops at $0.80 either way.
+
 ## Limitations and next steps
 
 - The dashboard always shows the public score; each user's own scores drive their Telegram digest, `/top`
-  and `/today`, but aren't on the dashboard yet. The LLM pre-filter (which jobs get an LLM extraction) uses
-  the deployment profile, not each member's.
+  and `/today`, but aren't on the dashboard yet. Which jobs get an LLM extraction is decided by the deployment
+  profile's rank, not each member's.
+- The token estimate before a call is a character count (3 characters per token), not a tokenizer, so it
+  over-reserves; the recorded cost is the API's own usage. Prices are a static table: when OpenAI changes them,
+  update `MODEL_PRICES` or set `LLM_PRICES_JSON`.
+- Cover letters are only as good as the resume text: a scanned PDF has no text to read, and `/cv` asks for
+  text instead.
 
 - Full descriptions depend on the job board serving the posting page to a non-browser client. As of October 2026, RemoteOK answers with a redirect loop and Himalayas with a Cloudflare challenge (HTTP 403), so on those boards the excerpt is usually kept (`failed` and `skipped_host` in the run stats). FirstFetch doesn't try to get around bot protection. Most RemoteOK and Himalayas API descriptions are already complete; only the short ones are fetched.
 - Pages are only fetched for postings that aren't stored yet, so rows saved before this feature keep their excerpts.
