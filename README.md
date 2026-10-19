@@ -55,6 +55,8 @@ Score  Elig  Title                                             Company          
 
 - **Notion** (`worker/notion.py`): upserts keyed by job URL, so re-runs update scores without duplicating pages. The `Status` you set in Notion is never overwritten.
 
+- **Telegram and tracker** (`backend/app/telegram/`, `backend/app/tracker.py`): a daily digest of the best new matches with Applied / Save / Not for me buttons, an owner-only bot, and a per-job application tracker whose 👎/⭐/✅ history nudges similar jobs down or up. See [Telegram alerts](#telegram-alerts).
+
 **Stack:** Python 3.12, FastAPI, SQLAlchemy + Alembic, PostgreSQL (pgvector), Redis + RQ, httpx, Pydantic, Next.js dashboard, Docker Compose, GitHub Actions.
 
 ## Quick start (no database)
@@ -74,6 +76,115 @@ python -m worker.cli discover --sources sources.example.yaml --json results.json
 3. `python -m worker.cli notion-setup` adds the properties FirstFetch writes.
 4. `python -m worker.cli discover --notion` syncs eligible jobs at or above `notify_threshold`.
 
+### Telegram alerts
+
+A Telegram bot sends you the day's best new matches and lets you track them from the chat. It talks
+to the Bot API directly over httpx (`backend/app/telegram/`) and only ever answers your own chat.
+
+**Daily digest.** At the end of the daily cron run (`GET /api/cron/discover`, so no extra cron is
+needed) FirstFetch sends up to `TELEGRAM_DIGEST_SIZE` (5) jobs that were stored in the last
+`TELEGRAM_DIGEST_MAX_AGE_DAYS` (7) days, are eligible or of unknown eligibility, nobody acted on yet, were
+never sent before, and score at least `TELEGRAM_DIGEST_MIN_SCORE` (60, after the feedback adjustment
+below). The score is the analysis `rank` when the scorer provides one, else the match score. Each job is
+one message: title, company, location, score (and hire probability when present), the top two reasons and
+an apply link, with buttons **✅ Applied · ⭐ Save · 👎 Not for me · 🔗 Open**. Tapping a button updates the
+tracker and redraws the message with the new status (↩️ Undo resets it). A job is marked as sent only after
+Telegram accepted it, so nothing is sent twice and a failed send is retried the next day. With nothing new
+the bot sends one line, "No new strong matches today"; set `TELEGRAM_DIGEST_SEND_EMPTY=false` to skip it.
+Telegram errors never fail the cron run: they're logged and recorded in a `telegram` row in run history.
+In Redis mode, jobs analyzed after the cron request finishes go out in the next day's digest.
+
+**Commands:** `/top` (best 5 open matches you haven't acted on), `/today` (stored since yesterday),
+`/applied` (tracked jobs with status and notes), `/stats` (pipeline counts), `/pause` and `/resume` (the
+digest), `/status <job id> <status>` (e.g. `/status 42 interviewing`), `/help`.
+
+The client keeps under Telegram's limits: requests are spaced to stay under 30 messages a second, a 429 is
+retried after the `retry_after` Telegram asks for (up to 30 s, three times), messages are HTML with every
+field escaped, and lists longer than 4096 characters are split between whole lines.
+
+**Setup** (about five minutes):
+
+1. In Telegram, open [@BotFather](https://t.me/BotFather), send `/newbot`, pick a name and a username
+   ending in `bot`. BotFather replies with the bot token.
+2. Make a webhook secret: `python3 -c "import secrets; print(secrets.token_urlsafe(32))"`.
+3. Add the token and the secret to the API project, in the Terminal app, from the repo root (each command
+   prompts for the value, so it never lands in your shell history):
+   ```bash
+   vercel env add TELEGRAM_BOT_TOKEN production
+   vercel env add TELEGRAM_WEBHOOK_SECRET production
+   vercel deploy --prod
+   ```
+4. Point the bot at the API. Run this locally with the same two values (`read -s` keeps them out of the
+   history too):
+   ```bash
+   read -rs TELEGRAM_BOT_TOKEN && export TELEGRAM_BOT_TOKEN
+   read -rs TELEGRAM_WEBHOOK_SECRET && export TELEGRAM_WEBHOOK_SECRET
+   python -m worker.cli telegram-setup --url https://<your-api-project>.vercel.app
+   ```
+   It calls `setWebhook` with the secret and `drop_pending_updates`, and registers the command menu.
+5. Send `/start` to your bot. It replies with your chat id, and that's all it does until the id is set.
+6. Add the chat id and redeploy:
+   ```bash
+   vercel env add TELEGRAM_CHAT_ID production
+   vercel deploy --prod
+   ```
+7. Check it: `TELEGRAM_CHAT_ID=<id> python -m worker.cli telegram-test` sends a test message, and
+   `DATABASE_URL=... python -m worker.cli telegram-digest --dry-run` prints what the digest would send now.
+
+The webhook (`POST /api/telegram/webhook`) only accepts requests carrying the secret in Telegram's
+`X-Telegram-Bot-Api-Secret-Token` header (compared in constant time). That header is also the only way
+past the `ADMIN_TOKEN` write lock, and only for this one path. Updates from any other chat are ignored.
+
+| Variable | Default | |
+|---|---|---|
+| `TELEGRAM_BOT_TOKEN` | | from BotFather; without it the bot and the digest are off |
+| `TELEGRAM_WEBHOOK_SECRET` | | 1-256 characters of `A-Z a-z 0-9 _ -` |
+| `TELEGRAM_CHAT_ID` | | your chat id, from `/start` |
+| `TELEGRAM_DIGEST_SIZE` | 5 | jobs per digest |
+| `TELEGRAM_DIGEST_MIN_SCORE` | 60 | 0-100, after feedback |
+| `TELEGRAM_DIGEST_MAX_AGE_DAYS` | 7 | only jobs stored within this many days |
+| `TELEGRAM_DIGEST_SEND_EMPTY` | true | send "no new strong matches" |
+| `TELEGRAM_TIMEZONE` | Africa/Addis_Ababa | times shown in messages |
+
+### Application tracker
+
+Every job can have a status: `new`, `saved`, `applied`, `interviewing`, `offer`, `rejected` or
+`not_interested`, plus notes and timestamps (status changed, first applied, sent to Telegram). It's stored in
+the `applications` table (migration `003_tracker`), separate from the scraped data, so re-scraping or
+re-analyzing never touches it. Set it from the Telegram buttons, `/status`, the select on each dashboard
+card, or the API (`GET /api/applications?status=saved,applied`, `PATCH /api/applications/{job_id}` with
+`{"status": "applied", "notes": "..."}`). The dashboard hides jobs marked "not for me" by default; the
+status filter brings them back. On the public deployment, writes need the admin token (header field on the
+dashboard, kept in your browser's localStorage).
+
+**Feedback learning** (`backend/app/tracker.py`) is a small, fixed rule, not a model. When ranking the
+digest and `/top`, each job is compared with the jobs you reacted to. Two jobs are *similar* when they
+share at least 2 keywords and their keyword sets overlap by at least half (Jaccard ≥ 0.5); keywords are the
+matched skills plus the title's role words, without seniority and filler words such as "senior" or
+"engineer".
+
+| Your history | Effect on the job |
+|---|---|
+| a similar job marked 👎 | −10 each |
+| a 👎 job at the same company | −10 |
+| a similar job saved or applied to | +5 each |
+| a saved or applied job at the same company | +5 |
+| total | clamped to −20 … +10 |
+
+Each adjustment shows its reason in the message ("Similar to jobs you saved or applied to (fastapi,
+python)") and the score shows both numbers ("Score 63 (58 + 5 feedback)"). The stored score never changes.
+
+### Talent networks
+
+The dashboard's **Talent networks** card lists platforms where one application and one vetting process
+can lead to many remote roles: Andela, Turing, Toptal, micro1, Mercor and Arc.dev, each with a one-line
+description and a link. Your status per platform (not started / applied / vetted / active) is stored in the
+`talent_networks` table; `GET /api/talent-networks`, `PATCH /api/talent-networks/{slug}` with
+`{"status": "vetted"}` (admin token on the public deployment). The descriptions say what each platform is,
+not how likely you are to get in.
+
+![Dashboard with tracker statuses and talent networks](docs/screenshots/dashboard-tracker.png)
+
 ### Repairing stored text
 
 Sources sometimes ship UTF-8 that was decoded as Latin-1/cp1252 (`Weâ€™re`). Adapters repair it on
@@ -89,8 +200,8 @@ DATABASE_URL=postgresql://... python -m worker.cli repair-text             # app
 
 ```bash
 pip install pytest ruff
-pytest          # 233 tests, offline: adapters run against trimmed real API responses and saved HTML pages
-TEST_DATABASE_URL=postgresql://postgres@localhost:5433/scratch pytest   # +1: eligibility filter on a real Postgres (drops and recreates the job tables)
+pytest          # 322 tests, offline: adapters run against trimmed real API responses and saved HTML pages; Telegram against a fake Bot API (httpx.MockTransport); migrations on SQLite
+TEST_DATABASE_URL=postgresql://postgres@localhost:5433/scratch pytest   # +2: eligibility filter (drops and recreates the job tables) and the migrations, in a throwaway schema, on a real Postgres
 ruff check worker tests
 ```
 
@@ -192,9 +303,14 @@ docker compose -f infra/docker-compose.yml up -d --build
 | POST | /api/sources | Create source |
 | POST | /api/sources/{id}/scrape | Enqueue scrape for one source |
 | POST | /api/scrape | Enqueue scrape (all or body `source_id`) |
-| GET | /api/jobs | List jobs (filter: source, min_score, q, eligible, page; sort: score or recent) |
+| GET | /api/jobs | List jobs (filter: source, min_score, q, eligible, status, page; sort: score or recent) |
 | GET | /api/jobs/{id} | Job detail |
-| GET | /api/runs | List scrape/analyze runs |
+| GET | /api/runs | List scrape/analyze/telegram runs |
+| GET | /api/applications | Tracked jobs (filter: status) |
+| PATCH | /api/applications/{job_id} | Set status and/or notes |
+| GET | /api/talent-networks | Talent networks with your status |
+| PATCH | /api/talent-networks/{slug} | Set your status for one network |
+| POST | /api/telegram/webhook | Telegram updates (secret header required) |
 
 `eligible` filters on the stored location eligibility: `any` (default), or a comma-separated subset of `true`, `false`, `unknown`. Jobs whose posting doesn't say who can apply, or that aren't analyzed yet, count as `unknown`. The dashboard requests `eligible=true,unknown` and reads the size of the hidden set from `eligible=false&page_size=1`.
 
@@ -240,7 +356,9 @@ vercel deploy --prod
 cd frontend && vercel link --project firstfetch && vercel deploy --prod
 ```
 
-Writes against a deployment with `ADMIN_TOKEN` need the header `X-Admin-Token: <token>`.
+Writes against a deployment with `ADMIN_TOKEN` need the header `X-Admin-Token: <token>`. For Telegram
+alerts add `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET` and `TELEGRAM_CHAT_ID` (see
+[Telegram alerts](#telegram-alerts)), and run `alembic upgrade head` once for the tracker tables.
 
 ## Limitations and next steps
 
