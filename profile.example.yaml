@@ -21,6 +21,13 @@ exclude_titles:
   - designer
   - marketing
   - customer success
+  # QA/testing roles: "automation" in target_titles would otherwise reward them
+  - qa
+  - quality assurance
+  - sdet
+  - test automation
+  - test engineer
+  - tester
 
 # skill: weight (1 = nice to have, 3 = core). Aliases like postgres/PostgreSQL are built in.
 skills:
