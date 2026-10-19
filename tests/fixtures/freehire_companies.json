@@ -1,0 +1,68 @@
+{
+ "data": [
+  {
+   "slug": "energy-jobline-cvl",
+   "name": "Energy Jobline CVL",
+   "job_count": 8691,
+   "tagline": null,
+   "industries": [],
+   "hq_country": null,
+   "collections": [],
+   "feedback_count": 0,
+   "feedback_rating_avg": null
+  },
+  {
+   "slug": "rm-staffing",
+   "name": "RM Staffing B.V.",
+   "job_count": 3958,
+   "tagline": null,
+   "industries": [],
+   "hq_country": null,
+   "collections": [],
+   "feedback_count": 0,
+   "feedback_rating_avg": null
+  },
+  {
+   "slug": "dye-durham",
+   "name": "Dye & Durham",
+   "job_count": 17,
+   "tagline": null,
+   "industries": [],
+   "hq_country": null,
+   "collections": [],
+   "feedback_count": 0,
+   "feedback_rating_avg": null
+  },
+  {
+   "slug": "lemon-io",
+   "name": "Lemon.io",
+   "job_count": 17,
+   "tagline": "We’re Lemon. io — the marketplace that connects you with hand-picked startups in the US and Europe.",
+   "industries": [
+    "recruitment"
+   ],
+   "hq_country": "ad",
+   "collections": [],
+   "feedback_count": 0,
+   "feedback_rating_avg": null
+  },
+  {
+   "slug": "lemon-io",
+   "name": "Lemon.io",
+   "job_count": 17,
+   "tagline": "We’re Lemon. io — the marketplace that connects you with hand-picked startups in the US and Europe.",
+   "industries": [
+    "recruitment"
+   ],
+   "hq_country": "ad",
+   "collections": [],
+   "feedback_count": 0,
+   "feedback_rating_avg": null
+  }
+ ],
+ "meta": {
+  "limit": 100,
+  "offset": 0,
+  "total": 5
+ }
+}

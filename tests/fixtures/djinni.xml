@@ -1,0 +1,38 @@
+<?xml version='1.0' encoding='utf-8'?>
+<rss xmlns:ns0="http://www.w3.org/2005/Atom" version="2.0">
+  <channel>
+    <title>Latest Job Vacancies at Djinni</title>
+    <link>http://djinni.co/jobs/</link>
+    <description>Stay updated with the newest job opportunities at Djinni.</description>
+    <ns0:link href="http://djinni.co/jobs/rss/" rel="self" />
+    <language>en</language>
+    <lastBuildDate>Mon, 19 Oct 2026 14:19:05 +0300</lastBuildDate>
+    <item>
+      <title>Python Developer</title>
+      <link>https://djinni.co/jobs/841620-python-developer/</link>
+      <description>&lt;p&gt;We are looking for an experienced Python Developer to join the project as soon as possible.&lt;/p&gt;&lt;p&gt;&amp;nbsp;&lt;/p&gt;&lt;p&gt;Requirements&lt;/p&gt;&lt;ul&gt;&lt;li&gt;4+ years of experience in a technical role&lt;/li&gt;&lt;li&gt;Strong Python and FastAPI skills&lt;/li&gt;&lt;li&gt;Experience with MongoDB Atlas&lt;/li&gt;&lt;li&gt;Basic AWS knowledge, including Batch, CloudWatch, ECS, and S3&lt;/li&gt;&lt;li&gt;Linux or macOS as a daily operating system — non-negotiable&lt;/li&gt;&lt;li&gt;Strong written and spoken English&lt;/li&gt;&lt;li&gt;&lt;p&gt;Availability to start ASAP&lt;/p&gt;&lt;p&gt;&amp;nbsp;&lt;/p&gt;&lt;/li&gt;&lt;/ul&gt;&lt;p&gt;Nice to Have&lt;/p&gt;&lt;ul&gt;&lt;li&gt;Experience integrating WhatsApp, SMS services such as Telnyx, and email platforms such as Postmark&lt;/li&gt;&lt;li&gt;Experience with WebSockets, Server-Sent Events, or HTTP streaming&lt;/li&gt;&lt;li&gt;Experience building chat applications&lt;/li&gt;&lt;li&gt;Hands-on experience with LMS integrations, including LTI, OAuth 2.0/OIDC, SAML, REST APIs, and webhooks&lt;/li&gt;&lt;li&gt;Experience with Canvas, ...</description>
+      <pubDate>Mon, 19 Oct 2026 13:56:25 +0300</pubDate>
+      <guid>https://djinni.co/jobs/841620-python-developer/</guid>
+      <category>Python</category>
+      <category />
+    </item>
+    <item>
+      <title>Middle Python Engineer</title>
+      <link>https://djinni.co/jobs/848142-middle-python-engineer/</link>
+      <description>&lt;p&gt;&lt;strong&gt;Department/Project Description&lt;/strong&gt;&lt;/p&gt;&lt;p&gt;Our Client is the leader of the US Broadcasting Market and one of the biggest companies on that is&amp;nbsp;providing Broadcasting Media Entertainment to users on OTT.&lt;br&gt;&lt;br&gt;&lt;strong&gt;Job Description&lt;/strong&gt;&lt;/p&gt;&lt;ul&gt;&lt;li&gt;3+ years of experience in Python&lt;/li&gt;&lt;li&gt;3+ years of hands-on experience with automation systems&lt;/li&gt;&lt;li&gt;1+ years of experience in some web framework (Fast API + React)&lt;/li&gt;&lt;li&gt;Database development (MySQL, PostgreSQL, SQLAlchemy, Alembic, etc)&lt;/li&gt;&lt;li&gt;Has exceptional skills in problem-solving and technical troubleshooting skills&lt;/li&gt;&lt;li&gt;&lt;p&gt;Not limited to other tools experience, but we require desire and ability to learn new tools:&lt;/p&gt;&lt;p&gt;CI/CD pipelines on both GitLab and Jenkins&lt;br&gt;Observability (Grafana, Prometheus, Otel, etc)&lt;br&gt;Automation Framework (pytest/unittest, playwright/cypress/selenium)&lt;br&gt;Server ...</description>
+      <pubDate>Mon, 19 Oct 2026 13:00:53 +0300</pubDate>
+      <guid>https://djinni.co/jobs/848142-middle-python-engineer/</guid>
+      <category>Python</category>
+      <category />
+    </item>
+    <item>
+      <title>Staff Backend Engineer (Python) / LUN App</title>
+      <link>https://djinni.co/jobs/851382-staff-backend-engineer-python-lun-app/</link>
+      <description>&lt;p&gt;Шукаємо досвідченого &lt;strong&gt;Staff&lt;/strong&gt; &lt;strong&gt;Python Backend Engineer&lt;/strong&gt;, який візьме повністю всю відповідальність за бекенд напрямок в продукті: від того, як віддаються дані, до того, наскільки швидко це відбувається.&lt;br&gt;&lt;br&gt;&lt;strong&gt;Команда&lt;/strong&gt;&lt;/p&gt;&lt;p&gt;Над мобільним застосунком ЛУН працює окрема продуктова команда: мобільні інженери (iOS, Android), продуктова дизайнерка, Product Manager і Engineering Manager. Ми щойно завершили великий рефакторинг і зараз входимо у фазу активного розвитку продукту: багато нових фіч, багато експериментів, велика аудиторія, на якій ці експерименти реально можна перевіряти.&lt;br&gt;&amp;nbsp;&lt;/p&gt;&lt;p&gt;Ти будеш&lt;strong&gt; єдиним/-ою backend engineer &lt;/strong&gt;в цій команді. Ти станеш людиною, яка відповідає за серверну частину застосунку: від того, як віддаються дані, до того, наскільки швидко це відбувається. При цьому бекенд-кодова база в багатьох ...</description>
+      <pubDate>Fri, 16 Oct 2026 16:30:18 +0300</pubDate>
+      <guid>https://djinni.co/jobs/851382-staff-backend-engineer-python-lun-app/</guid>
+      <category>Python</category>
+      <category />
+    </item>
+  </channel>
+</rss>

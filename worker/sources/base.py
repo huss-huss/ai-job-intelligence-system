@@ -8,6 +8,7 @@ import random
 import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 from typing import Any, Protocol
 
 import httpx
@@ -15,7 +16,11 @@ import httpx
 logger = logging.getLogger(__name__)
 
 DEFAULT_USER_AGENT = "FirstFetch/0.2 (+https://github.com/huss-huss/ai-job-intelligence-system)"
-RETRYABLE_STATUS = {429, 500, 502, 503, 504}
+# 520-524 are Cloudflare's "origin unreachable/timed out" pages, which clear up on a retry.
+RETRYABLE_STATUS = {429, 500, 502, 503, 504, 520, 521, 522, 523, 524}
+# When an API reports X-RateLimit-Remaining at or below this, wait for X-RateLimit-Reset first.
+RATE_LIMIT_LOW_WATER = 2
+MAX_RATE_LIMIT_WAIT = 60.0
 
 
 @dataclass
@@ -38,6 +43,18 @@ class JobPosting:
     salary_currency: str | None = None
     salary_text: str | None = None
     salary_period: str | None = None  # "hour", "day", "week", "month" or "year"; None means annual
+    # Facts some sources state (FreeHire, Jobicy, We Work Remotely); used by worker.hire.
+    employment_type: str | None = None  # "full_time", "part_time", "contract", "internship"
+    seniority: str | None = None  # intern, junior, mid, senior, lead, director, as the source states it
+    regions: list[str] = field(default_factory=list)  # macro-regions, e.g. ["global"], ["africa", "eu"]
+    countries: list[str] = field(default_factory=list)  # ISO 3166-1 alpha-2, lowercase
+    applied_count: int | None = None
+    view_count: int | None = None
+    timezone_note: str | None = None
+    posting_language: str | None = None  # ISO 639-1
+    extra: dict[str, Any] = field(default_factory=dict)  # source-specific facts, kept in jobs_raw.meta
+    # Every board this job was seen on (source -> URL), filled by cross-source dedupe.
+    source_urls: dict[str, str] = field(default_factory=dict)
 
     @property
     def content_hash(self) -> str:
@@ -96,9 +113,20 @@ class HttpClient:
         self.min_interval = min_interval
         self._sleep = sleep
         self._last_request = 0.0
+        self._rate_limit_wait = 0.0  # seconds to wait before the next request, from X-RateLimit-*
 
-    def get_json(self, url: str, params: dict[str, Any] | None = None) -> Any:
-        return self.request_json("GET", url, params=params)
+    def get_json(
+        self,
+        url: str,
+        params: dict[str, Any] | None = None,
+        *,
+        max_retries: int | None = None,
+        max_retry_wait: float | None = None,
+    ) -> Any:
+        """GET JSON. `max_retries`/`max_retry_wait` bound this call (e.g. a Retry-After: 300 on a 522)."""
+        return self._request(
+            "GET", url, params=params, max_retries=max_retries, max_retry_wait=max_retry_wait
+        ).json()
 
     def request_json(
         self,
@@ -118,9 +146,12 @@ class HttpClient:
         accept: str = "text/html,application/xhtml+xml;q=0.9,*/*;q=0.5",
         timeout: float | None = None,
         max_retries: int | None = None,
+        params: dict[str, Any] | None = None,
     ) -> str:
         """GET a page as text. `timeout` and `max_retries` override the client defaults for this call."""
-        return self._request("GET", url, headers={"Accept": accept}, timeout=timeout, max_retries=max_retries).text
+        return self._request(
+            "GET", url, params=params, headers={"Accept": accept}, timeout=timeout, max_retries=max_retries
+        ).text
 
     def _request(
         self,
@@ -132,6 +163,7 @@ class HttpClient:
         headers: dict[str, str] | None = None,
         timeout: float | None = None,
         max_retries: int | None = None,
+        max_retry_wait: float | None = None,
     ) -> httpx.Response:
         retries = self.max_retries if max_retries is None else max_retries
         extra = {} if timeout is None else {"timeout": timeout}
@@ -140,6 +172,7 @@ class HttpClient:
             self._throttle()
             try:
                 resp = self._client.request(method, url, params=params, json=json, headers=headers, **extra)
+                self._read_rate_limit(resp)
                 if resp.status_code in RETRYABLE_STATUS:
                     raise httpx.HTTPStatusError(f"HTTP {resp.status_code}", request=resp.request, response=resp)
                 resp.raise_for_status()
@@ -152,8 +185,11 @@ class HttpClient:
                 last_error = exc
                 if attempt < retries:
                     delay = self._retry_delay(exc, attempt)
+                    if max_retry_wait is not None:
+                        delay = min(delay, max_retry_wait)
                     logger.warning("%s %s failed (%s), retry %d in %.1fs", method, url, exc, attempt + 1, delay)
                     self._sleep(delay)
+                    self._rate_limit_wait = 0.0  # Retry-After already covered the window
             except httpx.RequestError as exc:  # e.g. a redirect loop: retrying won't help
                 raise SourceError(f"{method} {url} failed: {exc}") from exc
         status = last_error.response.status_code if isinstance(last_error, httpx.HTTPStatusError) else None
@@ -166,7 +202,28 @@ class HttpClient:
                 return min(float(retry_after), 60.0)
         return self.backoff_base * (2**attempt) + random.uniform(0, 0.25)
 
+    def _read_rate_limit(self, resp: httpx.Response) -> None:
+        """Pace against X-RateLimit-Remaining/Reset before the API refuses (FreeHire sends them on success).
+
+        A response without the headers means "unknown", not "unlimited": the normal throttle applies.
+        """
+        remaining, reset = resp.headers.get("X-RateLimit-Remaining"), resp.headers.get("X-RateLimit-Reset")
+        if remaining is None or reset is None:
+            return
+        try:
+            remaining_n, reset_s = int(remaining), float(reset)
+        except ValueError:
+            return
+        if remaining_n <= RATE_LIMIT_LOW_WATER:
+            self._rate_limit_wait = min(max(reset_s, 0.0), MAX_RATE_LIMIT_WAIT)
+            logger.info("%s: %d requests left in the window, pausing %.0fs", resp.url.host, remaining_n, reset_s)
+
     def _throttle(self) -> None:
+        if self._rate_limit_wait > 0:
+            self._sleep(self._rate_limit_wait)
+            self._rate_limit_wait = 0.0
+            self._last_request = time.monotonic()
+            return
         wait = self.min_interval - (time.monotonic() - self._last_request)
         if wait > 0:
             self._sleep(wait)
@@ -196,6 +253,24 @@ def parse_datetime(value: Any) -> datetime | None:
             return None
         return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
     return None
+
+
+def parse_rfc822(value: str | None) -> datetime | None:
+    """RSS pubDate ("Mon, 19 Oct 2026 14:19:05 +0300") as an aware datetime."""
+    if not value:
+        return None
+    try:
+        dt = parsedate_to_datetime(value.strip())
+    except (TypeError, ValueError):
+        return parse_datetime(value)
+    return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
+
+
+def to_int(value: Any) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def to_number(value: Any) -> float | None:
