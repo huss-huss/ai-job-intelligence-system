@@ -45,6 +45,16 @@ def test_heuristic_extracts_skills_seniority_salary():
     assert f.risk_flags == []
 
 
+def test_heuristic_reads_currency_and_period_from_salary_text():
+    f = HeuristicExtractor().extract(posting(salary_text="€5,000 per month")).fields
+    assert f.salary.model_dump() == {"min": 5000, "max": 5000, "currency": "EUR", "period": "month"}
+
+
+def test_heuristic_keeps_source_salary_period():
+    f = HeuristicExtractor().extract(posting(salary_max=40, salary_currency="USD", salary_period="hour")).fields
+    assert (f.salary.max, f.salary.currency, f.salary.period) == (40, "USD", "hour")
+
+
 def test_heuristic_flags_risky_and_vague_postings():
     flags = HeuristicExtractor().extract(posting(description="Commission-only sales role.")).fields.risk_flags
     assert "commission_only" in flags and "vague_description" in flags

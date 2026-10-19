@@ -30,7 +30,10 @@ from worker.sources import JobPosting, fetch_postings  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
-META_FIELDS = ("source", "external_id", "remote", "tags", "salary_min", "salary_max", "salary_currency", "salary_text")
+META_FIELDS = (
+    "source", "external_id", "remote", "tags",
+    "salary_min", "salary_max", "salary_currency", "salary_text", "salary_period",
+)  # fmt: skip
 
 
 def _source_config(source: Source, params: dict | None) -> dict:
@@ -70,6 +73,7 @@ def _to_posting(job: JobRaw) -> JobPosting:
         salary_max=meta.get("salary_max"),
         salary_currency=meta.get("salary_currency"),
         salary_text=meta.get("salary_text"),
+        salary_period=meta.get("salary_period"),
     )
 
 

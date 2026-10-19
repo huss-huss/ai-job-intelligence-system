@@ -36,6 +36,7 @@ class JobPosting:
     salary_max: float | None = None
     salary_currency: str | None = None
     salary_text: str | None = None
+    salary_period: str | None = None  # "hour", "day", "week", "month" or "year"; None means annual
 
     @property
     def content_hash(self) -> str:

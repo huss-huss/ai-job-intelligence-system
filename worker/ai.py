@@ -16,7 +16,7 @@ from typing import Literal, Protocol
 from pydantic import BaseModel, Field, ValidationError
 
 from worker.matching import detect_seniority
-from worker.sources.adapters import parse_salary_text
+from worker.salary import normalize_period, parse_salary
 from worker.sources.base import JobPosting
 
 logger = logging.getLogger(__name__)
@@ -28,7 +28,7 @@ class Salary(BaseModel):
     min: float | None = None
     max: float | None = None
     currency: str | None = None
-    period: Literal["hour", "month", "year"] | None = None
+    period: Literal["hour", "day", "week", "month", "year"] | None = None
 
 
 class ExtractedFields(BaseModel):
@@ -75,15 +75,17 @@ class HeuristicExtractor:
         text = f"{posting.title}\n{posting.description or ''}".lower()
         skills = [s for s in _SKILL_TERMS if re.search(rf"(?<![\w.]){re.escape(s)}(?![\w])", text)]
         smin, smax = posting.salary_min, posting.salary_max
+        currency, period = posting.salary_currency, normalize_period(posting.salary_period)
         if smin is None and smax is None:
-            smin, smax = parse_salary_text(posting.salary_text)
+            parsed = parse_salary(posting.salary_text)
+            smin, smax, currency, period = parsed.min, parsed.max, parsed.currency, parsed.period
         flags = [flag for flag, pattern in _RISK_PATTERNS.items() if re.search(pattern, text)]
         if len((posting.description or "").split()) < 40:
             flags.append("vague_description")
         fields = ExtractedFields(
             seniority=detect_seniority(posting.title),
             skills=skills,
-            salary=Salary(min=smin, max=smax, currency=posting.salary_currency, period="year" if smax else None),
+            salary=Salary(min=smin, max=smax, currency=currency, period=period or ("year" if smax else None)),
             remote=posting.remote,
             role_family=_role_family(text),
             risk_flags=flags,
