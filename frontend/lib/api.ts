@@ -88,6 +88,7 @@ export async function fetchJobs(params: {
   page?: number;
   page_size?: number;
   eligible?: EligibleFilter;
+  status?: string; // comma-separated tracker statuses; "new" includes untracked jobs
 }): Promise<JobsResponse> {
   const sp = new URLSearchParams();
   if (params.source != null) sp.set("source", String(params.source));
@@ -96,6 +97,7 @@ export async function fetchJobs(params: {
   if (params.page != null) sp.set("page", String(params.page));
   if (params.page_size != null) sp.set("page_size", String(params.page_size));
   if (params.eligible) sp.set("eligible", params.eligible);
+  if (params.status) sp.set("status", params.status);
   const res = await fetch(`${API_BASE}/api/jobs?${sp}`);
   if (!res.ok) throw new Error("Failed to fetch jobs");
   return res.json();
@@ -192,4 +194,84 @@ export async function clearJobs(): Promise<{ message: string; deleted_jobs: numb
     throw new Error(msg);
   }
   return data;
+}
+
+// ---------------------------------------------------------------- tracker & talent networks
+
+/** Mirrors APPLICATION_STATUSES in backend/app/models/tracker.py. */
+export const APPLICATION_STATUSES = ["new", "saved", "applied", "interviewing", "offer", "rejected", "not_interested"] as const;
+export type ApplicationStatus = (typeof APPLICATION_STATUSES)[number];
+
+export const TALENT_STATUSES = ["not_started", "applied", "vetted", "active"] as const;
+export type TalentStatus = (typeof TALENT_STATUSES)[number];
+
+export type Application = {
+  job_id: number;
+  status: ApplicationStatus;
+  notes: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+  status_changed_at: string | null;
+  applied_at: string | null;
+  notified_at: string | null;
+  job: { title: string; company: string | null; location: string | null; url: string; score: number | null };
+};
+
+export type TalentNetwork = {
+  slug: string;
+  name: string;
+  url: string;
+  summary: string;
+  status: TalentStatus;
+  updated_at: string | null;
+};
+
+const ADMIN_TOKEN_KEY = "firstfetch.adminToken";
+
+/** On a deployment with ADMIN_TOKEN set, writes need it. It's kept in this browser only. */
+export function getAdminToken(): string {
+  if (typeof window === "undefined") return "";
+  return window.localStorage.getItem(ADMIN_TOKEN_KEY) ?? "";
+}
+
+export function setAdminToken(token: string): void {
+  if (token) window.localStorage.setItem(ADMIN_TOKEN_KEY, token);
+  else window.localStorage.removeItem(ADMIN_TOKEN_KEY);
+}
+
+async function writeJson<T>(path: string, body: unknown): Promise<T> {
+  const token = getAdminToken();
+  const res = await fetch(`${API_BASE}${path}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...(token ? { "X-Admin-Token": token } : {}) },
+    body: JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    if (res.status === 403) throw new Error("Read-only: enter the admin token to make changes");
+    throw new Error(typeof data?.detail === "string" ? data.detail : `Request failed (${res.status})`);
+  }
+  return data as T;
+}
+
+export async function fetchApplications(status?: string): Promise<Application[]> {
+  const sp = new URLSearchParams();
+  if (status) sp.set("status", status);
+  const res = await fetch(`${API_BASE}/api/applications?${sp}`);
+  if (!res.ok) throw new Error("Failed to fetch applications");
+  return res.json();
+}
+
+export function updateApplication(jobId: number, body: { status?: ApplicationStatus; notes?: string }): Promise<Application> {
+  return writeJson(`/api/applications/${jobId}`, body);
+}
+
+export async function fetchTalentNetworks(): Promise<TalentNetwork[]> {
+  const res = await fetch(`${API_BASE}/api/talent-networks`);
+  if (!res.ok) throw new Error("Failed to fetch talent networks");
+  return res.json();
+}
+
+export function updateTalentNetwork(slug: string, status: TalentStatus): Promise<TalentNetwork> {
+  return writeJson(`/api/talent-networks/${slug}`, { status });
 }
