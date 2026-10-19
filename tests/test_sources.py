@@ -80,7 +80,30 @@ def test_lever_parses_salary_range_and_workplace():
     p = LeverAdapter.parse(load("lever")[0], "leverdemo")
     assert p.company == "leverdemo"
     assert p.salary_min == 85000 and p.salary_max == 175000
+    assert (p.salary_currency, p.salary_period) == ("USD", "year")
     assert p.remote is False  # hybrid
+
+
+@pytest.mark.parametrize(
+    "interval,period", [("per-hour-wage", "hour"), ("per-month-salary", "month"), ("one-time", "one-time")]
+)
+def test_lever_salary_interval_becomes_period(interval, period):
+    raw = load("lever")[0]
+    raw = {**raw, "salaryRange": {**raw["salaryRange"], "interval": interval}}
+    assert LeverAdapter.parse(raw).salary_period == period  # unrecognized intervals are kept, then score as unknown
+
+
+def test_himalayas_salary_period_is_normalized():
+    salary = {"minSalary": 4000, "maxSalary": 6000, "currency": "EUR", "salaryPeriod": "monthly"}
+    raw = {**load("himalayas")["jobs"][0], **salary}
+    p = HimalayasAdapter.parse(raw)
+    assert (p.salary_max, p.salary_currency, p.salary_period) == (6000, "EUR", "month")
+
+
+def test_remotive_salary_text_sets_currency_and_period():
+    raw = {**load("remotive")["jobs"][0], "salary": "€40 - €55 per hour"}
+    p = RemotiveAdapter.parse(raw)
+    assert (p.salary_min, p.salary_max, p.salary_currency, p.salary_period) == (40, 55, "EUR", "hour")
 
 
 def test_himalayas_location_restrictions_become_location():
@@ -164,6 +187,8 @@ def test_http_client_gives_up_after_max_retries():
         ("$170k - $200k", (170000, 200000)),
         ("80,000-100,000 USD", (80000, 100000)),
         ("$120k", (120000, 120000)),
+        ("$35,3k- $52k", (35300, 52000)),
+        ("$40/hr", (40, 40)),
         ("Competitive", (None, None)),
         (None, (None, None)),
     ],

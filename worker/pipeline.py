@@ -68,8 +68,13 @@ def enrich(posting: JobPosting, extraction: Extraction) -> JobPosting:
         updates["location"] = f.location_restriction
     if posting.remote is None and f.remote is not None:
         updates["remote"] = f.remote
-    if posting.salary_max is None and f.salary.max and f.salary.period in (None, "year"):
-        updates.update(salary_min=f.salary.min, salary_max=f.salary.max, salary_currency=f.salary.currency)
+    if posting.salary_max is None and f.salary.max:
+        updates.update(
+            salary_min=f.salary.min,
+            salary_max=f.salary.max,
+            salary_currency=f.salary.currency,
+            salary_period=f.salary.period,
+        )
     return replace(posting, **updates) if updates else posting
 
 

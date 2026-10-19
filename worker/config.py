@@ -26,6 +26,9 @@ class Settings(BaseSettings):
     notion_token: str = ""
     notion_database_id: str = ""
 
+    # Currency rates for salary scoring: JSON of USD per unit, merged over worker/salary.py's table
+    fx_rates_json: str = ""
+
     # Webhook alert (optional), fired for jobs at or above the profile's notify_threshold
     alert_webhook_url: str = ""
 

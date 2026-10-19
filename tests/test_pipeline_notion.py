@@ -1,13 +1,14 @@
 import json
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 
 import httpx
 
-from worker.ai import HeuristicExtractor, LLMExtractor
+from worker.ai import ExtractedFields, Extraction, HeuristicExtractor, LLMExtractor, Salary
 from worker.notion import SCHEMA, NotionSync, page_properties
-from worker.pipeline import LLM_PRESCORE_THRESHOLD, analyze, discover
+from worker.pipeline import LLM_PRESCORE_THRESHOLD, analyze, discover, enrich
 from worker.profile import load_profile
 from worker.sources.base import HttpClient, JobPosting
 
@@ -52,6 +53,21 @@ def test_llm_is_only_called_for_promising_jobs():
     bad = analyze(BAD, PROFILE, llm, now=NOW)
     assert llm.calls == 1
     assert good.score > LLM_PRESCORE_THRESHOLD > bad.score
+
+
+def test_enrich_fills_monthly_non_usd_salary_from_extraction():
+    llm_fields = ExtractedFields(salary=Salary(min=4000, max=5000, currency="EUR", period="month"))
+    enriched = enrich(GOOD, Extraction(fields=llm_fields, method="llm"))
+    assert (enriched.salary_max, enriched.salary_currency, enriched.salary_period) == (5000, "EUR", "month")
+    source_salary = replace(GOOD, salary_max=90000, salary_currency="USD")
+    assert enrich(source_salary, Extraction(fields=llm_fields, method="llm")) is source_salary  # source wins
+
+
+def test_analyze_scores_hourly_salary_text_as_annual():
+    hourly = analyze(replace(GOOD, salary_text="$45/hr"), PROFILE, HeuristicExtractor(), now=NOW)
+    assert hourly.posting.salary_period == "hour"
+    assert hourly.match.breakdown["salary"] == 10
+    assert "Salary up to $45/hr ≈ $93,600" in hourly.match.reasons
 
 
 def test_discover_ranks_jobs_and_isolates_failing_sources():

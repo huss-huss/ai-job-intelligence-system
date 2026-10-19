@@ -42,9 +42,11 @@ Score  Elig  Title                                             Company          
   | Skills | 35 | weighted coverage of your top skills; halved for off-target titles |
   | Location | 15 | "USA only", work-authorization clauses, and on-site roles make a job **ineligible** (score capped at 20) |
   | Seniority | 10 | |
-  | Salary | 10 | against `min_salary_usd`; non-USD treated as unknown rather than guessed |
+  | Salary | 10 | top of the range, normalized to annual USD, against `min_salary_usd` (5 when unknown) |
   | Recency | 5 | |
   | Risk flags | −10 each | commission-only, unpaid, upfront fees, vague postings |
+
+- **Salary normalization** (`worker/salary.py`): hourly × 2080 (40 h × 52 weeks), daily × 260, weekly × 52, monthly × 12; no period means annual and no currency means USD. Other currencies convert with a dated static table (USD per unit), which `FX_RATES_JSON='{"EUR": 1.1}'` overrides or extends. A currency or period the table doesn't know is scored as unknown, never guessed. Period and currency are read from the source's fields or from text such as `$40/hr`, `€5,000 per month`, `£70k`, `USD 120,000 - 150,000`. The reason shows both figures, e.g. `Salary up to €60,000/yr ≈ $70,200`. Stored `salary_min`/`salary_max` stay in the source's own unit.
 
 - **Notion** (`worker/notion.py`): upserts keyed by job URL, so re-runs update scores without duplicating pages. The `Status` you set in Notion is never overwritten.
 
@@ -71,7 +73,7 @@ python -m worker.cli discover --sources sources.example.yaml --json results.json
 
 ```bash
 pip install pytest ruff
-pytest          # 56 tests, offline: adapters run against trimmed real API responses
+pytest          # 144 tests, offline: adapters run against trimmed real API responses
 ruff check worker tests
 ```
 
@@ -224,7 +226,8 @@ Writes against a deployment with `ADMIN_TOKEN` need the header `X-Admin-Token: <
 ## Limitations and next steps
 
 - RemoteOK and Himalayas return shortened descriptions, so skill matches on those sources are under-counted. Fetching the full posting page is the next improvement.
-- Salary scoring only understands annual USD. Hourly and other currencies count as unknown.
+- Salary conversion uses fixed assumptions: hourly rates are treated as full-time (2080 h/yr, no unpaid leave), 13th-month pay is ignored, and exchange rates come from a static table dated in `worker/salary.py` (override with `FX_RATES_JSON`). A bare `$` is read as USD, so CAD/AUD listings that write only `$` are slightly over-valued.
+- Salary text without a period marker is taken as annual, so an unlabeled monthly figure ("€5,000") under-scores; currencies outside the table count as unknown.
 - On Vercel each discovery runs inside one function call (up to 300 s) and the Hobby plan allows one cron run per day. Docker Compose with the RQ worker has neither limit.
 - The pgvector `embeddings` table exists but isn't used yet. Semantic similarity against a CV is planned as an extra scoring component.
 - Respect each API's terms: Remotive asks for a few requests per day, and RemoteOK and Arbeitnow ask for links back to listings.

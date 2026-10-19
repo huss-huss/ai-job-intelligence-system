@@ -11,29 +11,17 @@ API terms worth respecting:
 
 from __future__ import annotations
 
-import re
 from typing import Any
 
+from worker.salary import normalize_period, parse_salary
 from worker.sources.base import HttpClient, JobPosting, parse_datetime, to_number
 from worker.text import fix_mojibake, html_to_text
 
-_SALARY_RE = re.compile(r"(\d+(?:[.,]\d+)?)\s*(k)?", re.IGNORECASE)
-
 
 def parse_salary_text(text: str | None) -> tuple[float | None, float | None]:
-    """Best-effort parse of free-text salaries like "$170k - $200k" or "80,000-100,000 USD"."""
-    if not text:
-        return None, None
-    values = []
-    for number, k in _SALARY_RE.findall(text):
-        n = float(number.replace(",", ""))
-        if k:
-            n *= 1000
-        if n >= 1000:  # ignore stray small numbers ("2 weeks PTO", hourly rates)
-            values.append(n)
-    if not values:
-        return None, None
-    return min(values), max(values)
+    """Best-effort (min, max) from free text like "$170k - $200k"; see worker.salary.parse_salary."""
+    parsed = parse_salary(text)
+    return parsed.min, parsed.max
 
 
 def _matches_keywords(posting: JobPosting, keywords: list[str]) -> bool:
@@ -57,7 +45,7 @@ class RemotiveAdapter:
 
     @staticmethod
     def parse(j: dict[str, Any]) -> JobPosting:
-        smin, smax = parse_salary_text(j.get("salary"))
+        salary = parse_salary(j.get("salary"))
         return JobPosting(
             source="remotive",
             external_id=str(j["id"]),
@@ -69,8 +57,10 @@ class RemotiveAdapter:
             posted_at=parse_datetime(j.get("publication_date")),
             remote=True,
             tags=list(j.get("tags") or []),
-            salary_min=smin,
-            salary_max=smax,
+            salary_min=salary.min,
+            salary_max=salary.max,
+            salary_currency=salary.currency,
+            salary_period=salary.period,
             salary_text=j.get("salary") or None,
         )
 
@@ -216,6 +206,7 @@ class LeverAdapter:
             salary_min=to_number(salary.get("min")),
             salary_max=to_number(salary.get("max")),
             salary_currency=salary.get("currency"),
+            salary_period=normalize_period(salary.get("interval")) or salary.get("interval"),
         )
 
 
@@ -249,4 +240,5 @@ class HimalayasAdapter:
             salary_min=to_number(j.get("minSalary")),
             salary_max=to_number(j.get("maxSalary")),
             salary_currency=j.get("currency"),
+            salary_period=normalize_period(j.get("salaryPeriod")) or j.get("salaryPeriod"),
         )
