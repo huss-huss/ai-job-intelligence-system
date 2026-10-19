@@ -1,7 +1,7 @@
 "use client";
 
 import { useId, useState } from "react";
-import type { MatchInfo } from "@/lib/api";
+import type { HireFactor, HireInfo, MatchInfo } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { CheckCircle2, ChevronDown, HelpCircle, XCircle } from "lucide-react";
 
@@ -17,8 +17,21 @@ const COMPONENTS = [
 const RISK_PENALTY = 10;
 const INELIGIBLE_CAP = 20;
 
+// Mirrors GATES and SOFT_WEIGHTS in worker/hire.py: hire = 100 × gates × weighted mean of the soft factors.
+const HIRE_GATES: { key: HireFactor; label: string }[] = [
+  { key: "eligibility", label: "Eligibility" },
+  { key: "timezone", label: "Timezone" },
+  { key: "language", label: "Language" },
+];
+const HIRE_SOFT: { key: HireFactor; label: string; weight: number }[] = [
+  { key: "competition", label: "Competition", weight: 30 },
+  { key: "freshness", label: "Freshness", weight: 30 },
+  { key: "seniority", label: "Seniority", weight: 20 },
+  { key: "employment", label: "Employment", weight: 20 },
+];
+
 // Reasons written by location_eligibility(); the badge already says this, so they're kept out of the top reasons.
-const LOCATION_REASON = /^(On-site\/hybrid|Description restricts|Location not specified|Remote, but eligible|Open to applicants|Restricted to)/;
+const LOCATION_REASON = /^(On-site\/hybrid|Description restricts|Location not specified|Remote, but eligible|Open to applicants|Restricted to|Timezone requirement only)/;
 
 const fmt = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(1));
 
@@ -75,7 +88,57 @@ export function TopReasons({ match }: { match: MatchInfo }) {
   );
 }
 
-function Bar({ label, points, max, negative = false }: { label: string; points: number; max: number; negative?: boolean }) {
+export function HireBadge({ hire }: { hire: HireInfo }) {
+  const cls =
+    hire.score >= 60
+      ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/30"
+      : hire.score >= 30
+        ? "bg-yellow-500/15 text-yellow-400 border-yellow-500/30"
+        : "bg-red-500/15 text-red-400 border-red-500/30";
+  return (
+    <span
+      className={cn("inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium border", cls)}
+      title="Estimated chance of being hired: eligibility, timezone, language, competition, freshness, seniority, employment type"
+    >
+      Hire chance {hire.score}%
+    </span>
+  );
+}
+
+function HireSection({ hire }: { hire: HireInfo }) {
+  const pct = (v: number | undefined) => `${Math.round((v ?? 0) * 100)}%`;
+  return (
+    <div>
+      <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Hire probability</p>
+      <ul className="space-y-2" aria-label="Hire probability factors">
+        {HIRE_GATES.map((g) => (
+          <Bar key={g.key} label={g.label} points={Math.round((hire.factors[g.key] ?? 1) * 100)} max={100} percent />
+        ))}
+        {HIRE_SOFT.map((f) => (
+          <Bar key={f.key} label={f.label} points={(hire.factors[f.key] ?? 0) * f.weight} max={f.weight} />
+        ))}
+      </ul>
+      <p className="mt-3 text-xs text-muted-foreground">
+        <span className="font-semibold text-foreground">{hire.score}</span> / 100 = gates (
+        {HIRE_GATES.map((g) => pct(hire.factors[g.key] ?? 1)).join(" × ")}) × weighted factors
+      </p>
+      {hire.reasons.length > 0 && (
+        <ul className="mt-2 space-y-1 text-xs text-muted-foreground" aria-label="Hire probability reasons">
+          {hire.reasons.map((r) => (
+            <li key={r} className="flex gap-2">
+              <span aria-hidden="true" className="text-primary/70">
+                •
+              </span>
+              <span>{r}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function Bar({ label, points, max, negative = false, percent = false }: { label: string; points: number; max: number; negative?: boolean; percent?: boolean }) {
   const pct = max > 0 ? Math.max(0, Math.min(1, Math.abs(points) / max)) * 100 : 0;
   const shown = negative ? (points === 0 ? "0" : `−${fmt(Math.abs(points))}`) : fmt(points);
   return (
@@ -89,14 +152,15 @@ function Bar({ label, points, max, negative = false }: { label: string; points: 
       </span>
       <span className="text-right tabular-nums text-foreground/90">
         {shown}
-        {!negative && <span className="text-muted-foreground"> / {max}</span>}
-        <span className="sr-only"> points</span>
+        {!negative && !percent && <span className="text-muted-foreground"> / {max}</span>}
+        {percent && <span className="text-muted-foreground">%</span>}
+        <span className="sr-only">{percent ? " percent" : " points"}</span>
       </span>
     </li>
   );
 }
 
-export function WhyThisScore({ match }: { match: MatchInfo }) {
+export function WhyThisScore({ match, hire, rank }: { match: MatchInfo; hire?: HireInfo | null; rank?: number | null }) {
   const [open, setOpen] = useState(false);
   const panelId = useId();
   const risks = riskReasons(match);
@@ -135,6 +199,12 @@ export function WhyThisScore({ match }: { match: MatchInfo }) {
                 {capped && ` (${fmt(sum)} capped at ${INELIGIBLE_CAP}: not open to your location)`}
               </p>
             </div>
+          )}
+          {hire && <HireSection hire={hire} />}
+          {hire && rank != null && (
+            <p className="text-xs text-muted-foreground">
+              Rank <span className="font-semibold text-foreground">{rank}</span> = √(fit {match.score} × hire {hire.score})
+            </p>
           )}
           {match.matched_skills.length > 0 && (
             <div>

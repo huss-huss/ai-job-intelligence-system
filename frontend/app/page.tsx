@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { fetchSources, triggerScrape, triggerAnalyze, fetchRuns, createTestJobs, clearJobs, type Source } from "@/lib/api";
+import { fetchSources, triggerScrape, triggerAnalyze, fetchRuns, createTestJobs, clearJobs, type JobSort, type Source } from "@/lib/api";
 import { JobsList } from "@/components/JobsList";
 import { RunsList } from "@/components/RunsList";
 import { TalentNetworks } from "@/components/TalentNetworks";
@@ -29,6 +29,7 @@ export default function DashboardPage() {
     source: undefined as number | undefined,
     min_score: undefined as number | undefined,
     q: "" as string,
+    sort: "rank" as JobSort,
     page: 1,
   });
 
@@ -344,6 +345,16 @@ export default function DashboardPage() {
                     <option value="">Any score</option>
                     <option value="0.7">70%+</option>
                     <option value="0.5">50%+</option>
+                  </select>
+                  <select
+                    aria-label="Sort jobs"
+                    className="rounded-lg border border-border/50 bg-secondary/50 px-3 py-2 text-sm transition-all hover:border-primary/30 focus:border-primary focus:ring-2 focus:ring-primary/20 focus:outline-none"
+                    value={filters.sort}
+                    onChange={(e) => setFilters((f) => ({ ...f, sort: e.target.value as JobSort, page: 1 }))}
+                  >
+                    <option value="rank">Best chance (fit × hire)</option>
+                    <option value="score">Best fit</option>
+                    <option value="recent">Newest</option>
                   </select>
                   <div className="flex flex-1 min-w-[200px] items-center gap-2">
                     <Search className="h-4 w-4 text-muted-foreground" />
