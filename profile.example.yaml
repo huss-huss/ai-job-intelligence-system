@@ -44,11 +44,22 @@ seniority: [mid, senior]
 
 location:
   country: Ethiopia
-  eligible_terms: [worldwide, anywhere, global, ethiopia, africa, emea]
+  country_code: et        # matched against sources that list countries (FreeHire)
+  eligible_terms: [worldwide, anywhere, global, ethiopia, africa, emea, mena]
   accepts_onsite: false
 
 min_salary_usd: 30000
 max_age_days: 30
+
+# --- Hire probability (worker/hire.py) ---
+# How much each employment type is worth to you (0-1). Types not listed count as 0.1.
+employment_types:
+  full_time: 1.0
+  contract: 0.6
+timezone: UTC+3            # your offset; compared with "US time zones only", "CET +/- 2h", ...
+max_competition: 50        # applicants (+ views/20) at which the competition factor falls to 0.2
+languages: [english, amharic]  # a posting requiring any other language scores low
+# years_experience: 5      # optional: compared with a posting's stated minimum years
 
 # Jobs at or above this score are synced to Notion / sent to the webhook.
 notify_threshold: 70

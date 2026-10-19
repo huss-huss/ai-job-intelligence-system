@@ -15,6 +15,7 @@ from datetime import UTC, datetime
 from worker.profile import CandidateProfile
 from worker.salary import format_salary, to_annual_usd
 from worker.sources.base import JobPosting
+from worker.timezone import find_timezone_windows
 
 WEIGHTS = {"role": 25, "skills": 35, "seniority": 10, "location": 15, "salary": 10, "recency": 5}
 INELIGIBLE_CAP = 20
@@ -65,6 +66,22 @@ def detect_seniority(title: str) -> str | None:
     return None
 
 
+def _timezone_only(location: str) -> bool:
+    """True for locations that only state a timezone ("Time zone: CET (+/- 3 hours)", "US time zones only").
+
+    Those say when you work, not where you may live, so they leave eligibility unknown; the timezone
+    itself is scored by worker.hire.
+    """
+    windows = find_timezone_windows(location, short_field=True)
+    if not windows:
+        return False
+    rest = location
+    for window in windows:
+        rest = rest.replace(window.text, " ")
+    rest = re.sub(r"(?i)time\s*zones?|timezones?|\bhours?\b|\bremote\b|\bonly\b|[^a-z]", " ", rest)
+    return not rest.strip()
+
+
 def location_eligibility(posting: JobPosting, profile: CandidateProfile) -> tuple[bool | None, str]:
     """True/False when we can tell, None when the posting doesn't say."""
     prefs = profile.location
@@ -85,6 +102,8 @@ def location_eligibility(posting: JobPosting, profile: CandidateProfile) -> tupl
     for part in parts:
         if any(_contains(part, term) for term in prefs.eligible_terms):
             return True, f"Open to applicants in {prefs.country} ({posting.location})"
+    if _timezone_only(posting.location or ""):
+        return None, f"Timezone requirement only ({posting.location})"
     return False, f"Restricted to {posting.location}"
 
 
