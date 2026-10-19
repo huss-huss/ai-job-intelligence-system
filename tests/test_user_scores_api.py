@@ -295,3 +295,18 @@ def test_private_jobs_query_on_postgres_uses_the_index_and_three_statements():
             conn.execute(text(f"DROP SCHEMA IF EXISTS {SCHEMA} CASCADE"))
         admin.dispose()
 
+
+def test_per_user_enrichment_counts_are_for_the_owner_only(client, world, session):
+    from app.models import Run
+
+    stats = {"selected": 4, "enriched": 4, "selected_by_user": {"1": 2, "2": 2}, "enriched_by_user": {"1": 2, "2": 2}}
+    session.add(Run(type="llm_enrich", status="completed", started_at=NOW, stats=stats))
+    session.commit()
+
+    def enrich_stats(headers):
+        (run,) = [r for r in client.get("/api/runs", headers=headers).json() if r["type"] == "llm_enrich"]
+        return run["stats"]
+
+    assert enrich_stats({}) == {"selected": 4, "enriched": 4}
+    assert enrich_stats({"X-User-Token": world["tokens"]["a"]}) == {"selected": 4, "enriched": 4}
+    assert enrich_stats(ADMIN) == stats

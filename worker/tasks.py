@@ -28,7 +28,7 @@ from worker.ai import Extraction, HeuristicExtractor, LLMExtractor, build_caller
 from worker.budget import SqlUsageStore  # noqa: E402
 from worker.config import settings  # noqa: E402
 from worker.notion import NotionSync  # noqa: E402
-from worker.pipeline import ScoredJob, analyze, count_llm, score_posting  # noqa: E402
+from worker.pipeline import ScoredJob, analyze, count_llm, fair_select, score_posting  # noqa: E402
 from worker.profile import CandidateProfile, load_profile  # noqa: E402
 from worker.sources import HttpClient, JobPosting, fetch_postings  # noqa: E402
 from worker.sources.base import parse_datetime  # noqa: E402
@@ -328,18 +328,26 @@ def _session_factory():
     return SyncSessionLocal
 
 
-def llm_candidates(session, now: datetime, window: timedelta = ENRICH_WINDOW) -> list[tuple[int, int, int]]:
-    """(rank, fit, job id) of recent jobs that only have rules extraction, best first."""
+def _open_for_llm(session, now: datetime, window: timedelta) -> dict[int, dict]:
+    """extracted_json of recent jobs that only have rules extraction and may still be sent to the LLM."""
     rows = session.execute(
         select(JobAnalysis.job_id, JobAnalysis.extracted_json)
         .join(JobRaw, JobRaw.id == JobAnalysis.job_id)
         .where(JobRaw.created_at >= now - window)
     ).all()
-    out = []
+    out = {}
     for job_id, data in rows:
         data = data or {}
         if data.get("method") == "llm" or data.get("llm_fallback") in NO_RETRY:
             continue
+        out[job_id] = data
+    return out
+
+
+def llm_candidates(session, now: datetime, window: timedelta = ENRICH_WINDOW) -> list[tuple[int, int, int]]:
+    """(rank, fit, job id) of recent jobs that only have rules extraction, best first by the public score."""
+    out = []
+    for job_id, data in _open_for_llm(session, now, window).items():
         fit = int((data.get("match") or {}).get("score") or 0)
         if fit <= 0:
             continue
@@ -348,13 +356,62 @@ def llm_candidates(session, now: datetime, window: timedelta = ENRICH_WINDOW) ->
     return out
 
 
-def run_llm_enrich_task(*, now: datetime | None = None, client=None, session_factory=None) -> dict:
-    """LLM extraction for the day's top-N jobs by rules rank (N = what's left of today's extraction cap).
+def user_llm_candidates(
+    session, user_ids: list[int], now: datetime, window: timedelta = ENRICH_WINDOW
+) -> dict[int, list[int]]:
+    """Each user's open jobs (as in llm_candidates), best first by *their own* rank, then fit. Two queries."""
+    from app.models import UserJobScore
 
-    Jobs are rescored with the LLM's facts for the public profile and every user. Calls run in
-    parallel (LLM_CONCURRENCY); no new call starts after LLM_ENRICH_MAX_SECONDS. Every call is
-    checked against the budget first (worker/budget.py). Never raises for LLM trouble: a failed call
-    keeps the rules analysis and is counted under `llm_fallbacks`.
+    open_ids = _open_for_llm(session, now, window)
+    ranked: dict[int, list[tuple[int, int, int]]] = {uid: [] for uid in user_ids}
+    if not open_ids or not user_ids:
+        return {uid: [] for uid in user_ids}
+    rows = session.execute(
+        select(UserJobScore.user_id, UserJobScore.job_id, UserJobScore.rank, UserJobScore.score)
+        .join(JobRaw, JobRaw.id == UserJobScore.job_id)
+        .where(JobRaw.created_at >= now - window, UserJobScore.user_id.in_(user_ids))
+    ).all()
+    for user_id, job_id, rank, fit in rows:
+        if job_id in open_ids and (fit or 0) > 0:
+            ranked[user_id].append((rank or 0, fit, job_id))
+    return {uid: [jid for _, _, jid in sorted(items, reverse=True)] for uid, items in ranked.items()}
+
+
+def select_enrich_jobs(session, n: int, now: datetime, stats: dict) -> dict[int, str]:
+    """The day's jobs for LLM extraction: `n` (what's left of the daily cap) shared fairly by active users.
+
+    Active users are those with a valid profile whose digest isn't paused. Each one's list is ranked by
+    their own scores (filled in first for anyone missing rows, e.g. a member who joined after the jobs were
+    analyzed); `fair_select` takes turns, rotating who goes first by day, and extracts a job on two lists
+    once. With no active user it is the public top-N, as before. The total is still at most `n`, so cost
+    doesn't depend on how many users there are. Returns {job id: whose list it came from} in pick order
+    (a user id as a string, or "public"); stats get the candidates and each list's contribution.
+    """
+    active = [(u, p) for u, p in user_scoring.user_profiles(session) if not u.paused]
+    if not active:
+        candidates = llm_candidates(session, now)
+        stats["candidates"] = len(candidates)
+        picked = {job_id: "public" for _, _, job_id in candidates[:n]}
+        stats["selected_by_user"] = {"public": len(picked)}
+        return picked
+    for user, profile in active:
+        user_scoring.score_missing(session, user, since=now - ENRICH_WINDOW, profile=profile, now=now)
+    ranked = user_llm_candidates(session, [u.id for u, _ in active], now)
+    stats["candidates"] = len(set().union(*ranked.values()))
+    order, picked_for, deduped = fair_select(ranked, n, start=now.date().toordinal())
+    stats["selected_by_user"] = {str(u.id): sum(1 for v in picked_for.values() if v == u.id) for u, _ in active}
+    stats["shared_skipped"] = deduped
+    return {job_id: str(picked_for[job_id]) for job_id in order}
+
+
+def run_llm_enrich_task(*, now: datetime | None = None, client=None, session_factory=None) -> dict:
+    """LLM extraction for the day's top-N jobs by rules rank (N = what's left of today's extraction cap),
+    shared fairly by the active users' own rankings (`select_enrich_jobs`).
+
+    The facts are per job, so each enriched job is rescored with the LLM's facts for the public profile and
+    every user, whoever's list picked it. Calls run in parallel (LLM_CONCURRENCY); no new call starts
+    after LLM_ENRICH_MAX_SECONDS. Every call is checked against the budget first (worker/budget.py).
+    Never raises for LLM trouble: a failed call keeps the rules analysis and is counted under `llm_fallbacks`.
     """
     now = now or datetime.now(UTC)
     session_factory = session_factory or _session_factory()
@@ -371,11 +428,10 @@ def run_llm_enrich_task(*, now: datetime | None = None, client=None, session_fac
         stats: dict = {"candidates": 0, "selected": 0, "enriched": 0, "llm_calls": 0, "llm_fallbacks": {}}
         try:
             remaining = caller.guard.remaining_extractions()
-            candidates = llm_candidates(session, now)
-            stats["candidates"] = len(candidates)
-            picked = [job_id for _, _, job_id in candidates[:remaining]]
+            picked = select_enrich_jobs(session, remaining, now, stats)
             stats["selected"] = len(picked)
-            jobs = {j.id: j for j in session.execute(select(JobRaw).where(JobRaw.id.in_(picked))).scalars()}
+            stats["enriched_by_user"] = dict.fromkeys(stats["selected_by_user"], 0)
+            jobs = {j.id: j for j in session.execute(select(JobRaw).where(JobRaw.id.in_(list(picked)))).scalars()}
             postings = {jid: _to_posting(jobs[jid]) for jid in picked if jid in jobs}
             session.commit()  # no transaction stays open during the calls
 
@@ -409,6 +465,7 @@ def run_llm_enrich_task(*, now: datetime | None = None, client=None, session_fac
                 _store_analysis(session, job_id, scored)
                 user_rows += user_scoring.scores_for_users(job_id, posting, extraction, scored, users, now)
                 stats["enriched"] += 1
+                stats["enriched_by_user"][picked[job_id]] += 1
             if user_rows:
                 user_scoring.replace_scores(session, user_rows)
             fallbacks = sum(stats["llm_fallbacks"].values())
