@@ -7,8 +7,9 @@
 * Wrong codes are throttled per chat (5 per 15 minutes, then a 1-hour lockout) and globally
   (50 per hour across every chat, then redemption pauses for an hour). The per-chat key is a hash
   of the chat id, so the throttle table stores nothing that identifies anyone.
-* Removing a member deletes them and everything they own (tracker, talent networks, scores,
-  their dashboard token); invites they used keep no link to them.
+* Removing a member deletes them and everything they own (tracker, talent networks, scores, resume,
+  their dashboard token); invites they used and their AI usage rows (token counts and cost only)
+  keep no link to them.
 * The personal dashboard token (/dashboard) is 32 random bytes, stored as SHA-256 only.
 
 Nothing here logs chat ids, names, codes or tokens.
@@ -33,6 +34,7 @@ from app.models import (
     Application,
     AuthThrottle,
     Invite,
+    LlmUsage,
     TalentNetworkStatus,
     User,
     UserJobScore,
@@ -122,6 +124,8 @@ def delete_user_data(session: Session, user_id: int) -> None:
     session.execute(delete(TalentNetworkStatus).where(TalentNetworkStatus.user_id == user_id))
     session.execute(delete(UserJobScore).where(UserJobScore.user_id == user_id))
     session.execute(update(Invite).where(Invite.used_by == user_id).values(used_by=None))
+    # Spend already made still counts toward the month: the ledger rows (tokens, cost) lose the link.
+    session.execute(update(LlmUsage).where(LlmUsage.user_id == user_id).values(user_id=None))
     session.execute(delete(Invite).where(Invite.created_by == user_id))
     session.execute(delete(User).where(User.id == user_id))
     session.flush()

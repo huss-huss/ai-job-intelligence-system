@@ -41,7 +41,12 @@ class Settings(BaseSettings):
 
     # API
     openai_api_key: str = ""
-    openai_model: str = "gpt-4o-mini"
+    openai_model: str = "gpt-6-luna"
+    llm_base_url: str = ""  # an OpenAI-compatible server instead of OpenAI (worker/config.py has the rest)
+
+    @property
+    def ai_enabled(self) -> bool:
+        return bool(self.openai_api_key or self.llm_base_url)
 
     # Scraping
     scrape_user_agent: str = "AI-Job-Intelligence/1.0 (compatible; +https://github.com/ai-job-intelligence)"

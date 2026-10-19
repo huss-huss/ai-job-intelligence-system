@@ -47,3 +47,6 @@ MANUAL_SETUP_STEPS.md
 profile.yaml
 sources.yaml
 .vercel
+
+# Local LLM usage ledger for `discover` without a database (worker/budget.py)
+.firstfetch/
