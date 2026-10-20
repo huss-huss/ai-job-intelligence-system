@@ -3,11 +3,12 @@
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth import require_owner
 from app.database import get_db
 from app.models import Source
 from app.queue import dispatch_scrape
-from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter(prefix="/api", tags=["scrape"])
 
@@ -18,7 +19,7 @@ class ScrapeRequest(BaseModel):
     source_id: int | None = None  # If omitted, scrape all enabled sources
 
 
-@router.post("/scrape")
+@router.post("/scrape", dependencies=[Depends(require_owner)])
 async def scrape(request: ScrapeRequest | None = None, db: AsyncSession = Depends(get_db)) -> dict:
     """Enqueue scrape task(s). If source_id given, scrape that source; else scrape all enabled."""
     if request and request.source_id is not None:

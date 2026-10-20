@@ -273,13 +273,22 @@ def callback_update(data: str, chat_id: str = OWNER, message_id: int = 77) -> di
 
 
 class AsyncSessionAdapter:
-    """Enough of AsyncSession for the async routes (jobs, runs, sources) to run on a sync SQLite session."""
+    """Enough of AsyncSession for the async routes (jobs, runs, sources, scrape, analyze) to run on a sync session."""
 
     def __init__(self, session: Session) -> None:
         self.session = session
 
     async def execute(self, stmt, *args, **kwargs):
         return self.session.execute(stmt, *args, **kwargs)
+
+    def add(self, obj) -> None:
+        self.session.add(obj)
+
+    async def flush(self) -> None:
+        self.session.flush()
+
+    async def refresh(self, obj) -> None:
+        self.session.refresh(obj)
 
     async def commit(self) -> None:
         self.session.commit()

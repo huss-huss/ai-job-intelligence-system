@@ -1,5 +1,5 @@
-"""GET /api/jobs with a token ranks, filters and scores by the viewer's own user_job_scores; without one it
-is the public score exactly as before. One user's token never yields another user's scores or statuses."""
+"""GET /api/jobs ranks, filters and scores by the viewer's own user_job_scores; without a login it answers
+401. One user's token never yields another user's scores or statuses."""
 
 import json
 import os
@@ -8,7 +8,7 @@ import time
 import main
 import pytest
 from app import tracker, users
-from app.auth import Viewer, optional_viewer
+from app.auth import Viewer, require_viewer
 from app.config import settings as app_settings
 from app.database import get_db
 from app.db_sync import get_sync_db
@@ -84,14 +84,21 @@ def _titles(body):
     return [j["title"] for j in body["items"]]
 
 
-def test_public_view_is_the_public_score_unchanged(client, world):
-    body = _get(client, sort="rank")
+def test_the_public_gets_401_and_no_scores(client, world):
+    for params in ({}, {"sort": "rank"}, {"sort": "score", "min_score": 0.65}, {"page_size": 1}):
+        resp = client.get("/api/jobs", params=params)
+        assert resp.status_code == 401 and "Job " not in resp.text and "total" not in resp.json()
+
+
+def test_a_viewer_without_rows_gets_the_public_score_marked_public(client, world, session):
+    session.query(UserJobScore).filter(UserJobScore.user_id == world["owner"].id).delete()
+    session.commit()
+    body = client.get("/api/jobs", params={"sort": "rank"}, headers=ADMIN).json()
     assert _titles(body) == ["Job 3", "Job 2", "Job 1", "Job 0"]
     job3 = body["items"][0]["analysis"]
     assert job3["score"] == pytest.approx(0.8) and job3["extracted_json"]["rank"] == 70
-    assert "score_scope" not in json.dumps(body)
+    assert {j["analysis"]["extracted_json"]["score_scope"] for j in body["items"]} == {"public"}
     assert "Reason A" not in json.dumps(body) and "Reason B" not in json.dumps(body)
-    assert _titles(_get(client, sort="score", min_score=0.65)) == ["Job 3", "Job 2"]
 
 
 def test_a_token_ranks_and_scores_by_that_users_own_rows(client, world):
@@ -112,7 +119,8 @@ def test_min_score_uses_the_viewers_fit(client, world):
     a = world["tokens"]["a"]
     assert _titles(_get(client, a, sort="score", min_score=0.75)) == ["Job 0", "Job 1"]
     assert _get(client, world["tokens"]["b"], min_score=0.5)["total"] == 0
-    assert _titles(_get(client, sort="score", min_score=0.75)) == ["Job 3"]  # public
+    owner_view = client.get("/api/jobs", params={"sort": "score", "min_score": 0.75}, headers=ADMIN).json()
+    assert _titles(owner_view) == ["Job 3"]  # no rows for the owner: the public fit
 
 
 def test_private_eligibility_filter_reads_the_viewers_row_then_the_public_flag(monkeypatch):
@@ -145,8 +153,9 @@ def test_no_cross_user_leakage(client, world):
     for job in world["jobs"]:
         detail = client.get(f"/api/jobs/{job.id}", headers={"X-User-Token": a}).json()
         assert detail["analysis"]["extracted_json"]["match"]["reasons"][0].startswith("Reason A")
-    # A wrong token is the public view, not someone's.
-    assert "score_scope" not in json.dumps(_get(client, "not-a-real-token-123456"))
+    # A wrong token is nobody: 401, not someone's view.
+    resp = client.get("/api/jobs", headers={"X-User-Token": "not-a-real-token-123456"})
+    assert resp.status_code == 401 and "Job " not in resp.text
 
 
 def test_the_owner_sees_their_own_rows(client, world, session):
@@ -156,7 +165,7 @@ def test_the_owner_sees_their_own_rows(client, world, session):
     body = client.get("/api/jobs", params={"sort": "rank"}, headers=ADMIN).json()
     assert body["items"][0]["title"] == "Job 0"
     assert body["items"][0]["analysis"]["extracted_json"]["match"]["reasons"] == ["Reason OWNER"]
-    assert _get(client, sort="rank")["items"][0]["title"] == "Job 3"  # the public view is unaffected
+    assert _get(client, world["tokens"]["a"], sort="rank")["items"][0]["title"] == "Job 0"  # A's view is unaffected
 
 
 def test_jobs_without_a_row_for_the_viewer_keep_the_public_score_and_sort_last(client, world, session):
@@ -249,8 +258,8 @@ def test_private_jobs_query_on_postgres_uses_the_index_and_three_statements():
                 yield Capture(session)
 
         main.app.dependency_overrides[get_db] = capturing_db
-        main.app.dependency_overrides[optional_viewer] = lambda: Viewer(role="member", user_id=friend_id)
-        client = TestClient(main.app)
+        main.app.dependency_overrides[require_viewer] = lambda: Viewer(role="member", user_id=friend_id)
+        client = TestClient(main.app, headers={"X-User-Token": "friend"})
         client.get("/api/jobs", params={"sort": "rank", "eligible": "true,unknown"})  # warm up
         statements.clear()
         captured.clear()
@@ -307,6 +316,6 @@ def test_per_user_enrichment_counts_are_for_the_owner_only(client, world, sessio
         (run,) = [r for r in client.get("/api/runs", headers=headers).json() if r["type"] == "llm_enrich"]
         return run["stats"]
 
-    assert enrich_stats({}) == {"selected": 4, "enriched": 4}
+    assert client.get("/api/runs").status_code == 401
     assert enrich_stats({"X-User-Token": world["tokens"]["a"]}) == {"selected": 4, "enriched": 4}
     assert enrich_stats(ADMIN) == stats

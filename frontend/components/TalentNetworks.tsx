@@ -46,7 +46,7 @@ export function TalentNetworks() {
     }
   };
 
-  // The public API sends the platform list without anyone's progress.
+  // Every viewer is logged in (the dashboard is private); a status is always the viewer's own.
   const privateView = !!networks?.some((n) => n.status);
   const done = networks?.filter((n) => n.status && n.status !== "not_started").length ?? 0;
 

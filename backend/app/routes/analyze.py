@@ -3,11 +3,12 @@
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth import require_owner
 from app.database import get_db
 from app.models import JobRaw
 from app.queue import dispatch_analyze
-from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter(prefix="/api", tags=["analyze"])
 
@@ -18,7 +19,7 @@ class AnalyzeRequest(BaseModel):
     job_ids: list[int] | None = None
 
 
-@router.post("/analyze")
+@router.post("/analyze", dependencies=[Depends(require_owner)])
 async def analyze(
     request: AnalyzeRequest | None = None,
     db: AsyncSession = Depends(get_db),

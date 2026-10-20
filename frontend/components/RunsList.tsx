@@ -7,7 +7,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { RefreshCw, CheckCircle, XCircle, Loader2, Trash2 } from "lucide-react";
 
-export function RunsList() {
+/** Run history; "Clear" only for the owner (canClear), which the API enforces too. */
+export function RunsList({ canClear = false }: { canClear?: boolean }) {
   const [runs, setRuns] = useState<Run[]>([]);
   const [loading, setLoading] = useState(true);
   const [clearing, setClearing] = useState(false);
@@ -70,7 +71,7 @@ export function RunsList() {
             <RefreshCw className="h-5 w-5 text-primary" />
             Run history
           </CardTitle>
-          {runs.length > 0 && (
+          {canClear && runs.length > 0 && (
             <Button
               size="sm"
               variant="ghost"

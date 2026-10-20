@@ -68,12 +68,12 @@ def test_pooled_neon_host_disables_prepared_statement_caches():
     assert url.query["prepared_statement_cache_size"] == "0"
 
 
-def test_admin_token_makes_writes_read_only(monkeypatch):
+def test_writes_need_the_owner_and_cron_only_its_secret(monkeypatch):
     client = _client(monkeypatch, "s3cret")
     monkeypatch.setattr(settings, "admin_token", "adm")
-    assert client.post("/api/scrape", json={}).status_code == 403
+    assert client.post("/api/scrape", json={}).status_code == 401
     assert client.delete("/api/jobs", headers={"X-Admin-Token": "wrong"}).status_code == 403
-    # reads and the cron endpoint (its own secret) still work
+    # health and the cron endpoint (its own secret) need no login
     assert client.get("/api/health").status_code == 200
     assert client.get("/api/cron/discover", headers={"Authorization": "Bearer s3cret"}).status_code == 200
     main.app.dependency_overrides.clear()

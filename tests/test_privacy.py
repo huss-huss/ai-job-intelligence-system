@@ -1,13 +1,14 @@
-"""The privacy lock: no tracker status, note, feedback or talent-network progress leaks through any
-endpoint a caller without a token can reach. Seeds every kind of private data, then calls every GET
-route the app has."""
+"""The privacy lock: the whole dashboard is private. Every GET route is classified as public (an explicit
+allowlist) or private; logged out, every private one answers 401 with no data or counts, and the public
+ones carry nothing private. Logged in, nobody sees another user's statuses, notes or progress. Seeds every
+kind of private data, then calls every GET route the app has."""
 
 import json
 from datetime import timedelta
 
 import main
 import pytest
-from app import talent, tracker
+from app import talent, tracker, users
 from app.config import settings as app_settings
 from app.database import get_db
 from app.db_sync import get_sync_db
@@ -79,10 +80,21 @@ def _keys(value) -> set[str]:
     return set()
 
 
-def _public_gets(job_id: int, source_id: int) -> list[str]:
-    """Every GET route, with path parameters filled in. A new GET route fails this test until it's listed."""
-    known = {
-        "/api/health": ["/api/health"],
+# The public allowlist, spelled out: the only API paths a logged-out visitor reaches (main.PUBLIC_PATHS).
+PUBLIC_PATHS = {
+    "/api/health",
+    "/api/auth/session",
+    "/api/auth/telegram",
+    "/api/auth/token-session",
+    "/api/auth/logout",
+    "/api/telegram/webhook",
+    "/api/cron/discover",
+}
+PUBLIC_GETS = {"/api/health", "/api/auth/session", "/api/cron/discover"}  # cron: CRON_SECRET (test_telegram_digest)
+
+
+def _private_gets(job_id: int, source_id: int) -> dict[str, list[str]]:
+    return {
         "/api/sources": ["/api/sources"],
         "/api/sources/{source_id}": [f"/api/sources/{source_id}"],
         "/api/jobs": [
@@ -90,57 +102,87 @@ def _public_gets(job_id: int, source_id: int) -> list[str]:
             "/api/jobs?sort=recent",
             "/api/jobs?page_size=100",
             "/api/jobs?q=Backend",
+            "/api/jobs?status=interviewing",
         ],
-        "/api/jobs/{job_id}": [f"/api/jobs/{job_id}"],
+        "/api/jobs/{job_id}": [f"/api/jobs/{job_id}", "/api/jobs/999999"],
         "/api/runs": ["/api/runs", "/api/runs?type=telegram"],
         "/api/applications": ["/api/applications", "/api/applications?status=interviewing"],
         "/api/talent-networks": ["/api/talent-networks"],
         "/api/me": ["/api/me"],
-        "/api/auth/session": ["/api/auth/session"],
-        "/api/cron/discover": [],  # CRON_SECRET; covered in test_telegram_digest
     }
+
+
+def _classified_gets(job_id: int, source_id: int) -> tuple[list[str], list[str]]:
+    """(public URLs, private URLs) for every GET route. A new GET route fails this until it's classified."""
+    private = _private_gets(job_id, source_id)
+    assert not PUBLIC_GETS & set(private)
     routes = {r.path for r in main.app.routes if isinstance(r, APIRoute) and "GET" in r.methods}
-    assert routes == set(known), f"review new GET routes for private data: {routes ^ set(known)}"
-    return [url for urls in known.values() for url in urls]
+    assert routes == PUBLIC_GETS | set(private), f"classify new GET routes: {routes ^ (PUBLIC_GETS | set(private))}"
+    public = [p for p in sorted(PUBLIC_GETS) if p != "/api/cron/discover"]
+    return public, [url for urls in private.values() for url in urls]
 
 
-@pytest.mark.parametrize("token", [None, "wrong-token", ""])
-def test_no_private_data_on_any_public_endpoint(client, seeded, token):
-    headers = {"X-Admin-Token": token} if token is not None else {}
-    for url in _public_gets(seeded[0].id, seeded[0].source_id):
+def test_the_public_allowlist_is_exactly_these_paths():
+    assert set(main.PUBLIC_PATHS) == PUBLIC_PATHS
+    assert PUBLIC_GETS <= PUBLIC_PATHS
+    every_path = {r.path for r in main.app.routes if isinstance(r, APIRoute)}
+    assert PUBLIC_PATHS <= every_path  # no stale entries
+
+
+@pytest.mark.parametrize(
+    "headers",
+    [
+        pytest.param({}, id="no-credentials"),
+        pytest.param({"X-Admin-Token": "wrong-token"}, id="wrong-admin-token"),
+        pytest.param({"X-Admin-Token": ""}, id="empty-admin-token"),
+        pytest.param({"X-User-Token": "not-a-real-token-123456"}, id="wrong-user-token"),
+        pytest.param({"Cookie": "ff_session=forged-" + "x" * 40}, id="forged-cookie"),
+    ],
+)
+def test_every_private_get_is_401_without_a_valid_login(client, seeded, headers):
+    public, private = _classified_gets(seeded[0].id, seeded[0].source_id)
+    titles = [job.title for job in seeded] + [job.company for job in seeded]
+    for url in private:
         resp = client.get(url, headers=headers)
+        assert resp.status_code == 401, url
         body = resp.text
-        for word in PRIVATE_WORDS:
+        for word in (*PRIVATE_WORDS, *titles, '"total"', '"items"', '"stats"', '"slug"'):
             assert word not in body, f"{url} leaks {word!r}"
+        assert set(resp.json()) <= {"detail", "authenticated"}, url
+    for url in public:
+        resp = client.get(url, headers=headers)
+        assert resp.status_code == 200, url
+        assert not any(word in resp.text for word in (*PRIVATE_WORDS, *titles)), url
+    assert client.get("/api/auth/session", headers=headers).json() == {"authenticated": False}
+
+
+def test_a_user_without_data_of_their_own_sees_nobody_elses(client, seeded, session):
+    loner = add_member(session, "555009", name="Loner")
+    token = users.issue_dashboard_token(session, loner)
+    session.commit()
+    _, private = _classified_gets(seeded[0].id, seeded[0].source_id)
+    for url in private:
+        resp = client.get(url, headers={"X-User-Token": token})
+        assert resp.status_code in (200, 404), url
+        for word in PRIVATE_WORDS:
+            assert word not in resp.text, f"{url} leaks {word!r} to another user"
         if resp.status_code == 200:
             assert not PRIVATE_KEYS & _keys(resp.json()), url
+    assert client.get("/api/applications", headers={"X-User-Token": token}).json() == []
 
 
-def test_private_endpoints_answer_401_to_the_public(client, seeded):
-    for url in ("/api/applications", "/api/applications?status=interviewing", "/api/me"):
-        assert client.get(url).status_code == 401
-    # The status filter on /api/jobs would reveal which jobs someone acted on.
-    for status in ("interviewing", "new", "applied,offer", "not_interested"):
-        assert client.get("/api/jobs", params={"status": status}).status_code == 401
-    assert client.get("/api/jobs", params={"status": "any"}).status_code == 200  # "any" is no filter
-
-
-def test_public_talent_networks_are_the_catalog_only(client, seeded):
-    networks = client.get("/api/talent-networks").json()
-    assert [n["slug"] for n in networks] == [n["slug"] for n in talent.CATALOG]
-    assert all(set(n) == {"slug", "name", "url", "summary"} for n in networks)
-
-
-def test_public_jobs_have_job_data_and_the_public_score(client, seeded):
-    items = client.get("/api/jobs").json()["items"]
+def test_logged_in_jobs_have_job_data_and_a_score(client, seeded):
+    items = client.get("/api/jobs", headers=ADMIN).json()["items"]
     assert len(items) == 4
     assert all(i["analysis"]["score"] > 0 and "match" in i["analysis"]["extracted_json"] for i in items)
     assert all("status" not in i for i in items)
 
 
-def test_public_runs_show_only_telegram_totals(client, seeded):
-    (run,) = [r for r in client.get("/api/runs").json() if r["type"] == "telegram"]
-    assert run["stats"] == {"sent": 1, "failed": 1}
+def test_members_see_only_telegram_totals_and_the_owner_everything(client, seeded, session):
+    token = users.issue_dashboard_token(session, users.by_chat(session, "555001"))
+    session.commit()
+    (run,) = [r for r in client.get("/api/runs", headers={"X-User-Token": token}).json() if r["type"] == "telegram"]
+    assert run["stats"] == {"sent": 1, "failed": 1}  # a digest run covers every user: details are the owner's
     (private,) = [r for r in client.get("/api/runs", headers=ADMIN).json() if r["type"] == "telegram"]
     assert private["stats"]["errors"][0]["job_id"] == seeded[1].id
 

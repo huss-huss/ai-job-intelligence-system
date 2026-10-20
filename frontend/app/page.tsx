@@ -1,16 +1,33 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { fetchSources, triggerScrape, triggerAnalyze, fetchRuns, createTestJobs, clearJobs, type JobSort, type Source } from "@/lib/api";
+import { useRouter } from "next/navigation";
+import { canAdmin, fetchSources, triggerScrape, triggerAnalyze, fetchRuns, createTestJobs, clearJobs, type JobSort, type Me, type Source } from "@/lib/api";
 import { JobsList } from "@/components/JobsList";
 import { RunsList } from "@/components/RunsList";
 import { TalentNetworks } from "@/components/TalentNetworks";
-import { ViewerControl } from "@/components/Tracker";
+import { AuthPending, useViewer, ViewerControl } from "@/components/Tracker";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Play, Search, Briefcase, Loader2, Trash2, RefreshCw } from "lucide-react";
 
+/**
+ * The whole dashboard is private: nothing but a spinner renders until GET /api/auth/session answers, and a
+ * visitor who isn't logged in goes to /login. The API refuses every data request without a login anyway.
+ */
 export default function DashboardPage() {
+  const me = useViewer();
+  const router = useRouter();
+  useEffect(() => {
+    if (me === null) router.replace("/login");
+  }, [me, router]);
+  if (!me) return <AuthPending label={me === null ? "Redirecting to log in…" : "Checking your login…"} />;
+  return <Dashboard me={me} />;
+}
+
+function Dashboard({ me }: { me: Me }) {
+  // Scrape, analyze, test data and clearing: the owner only (the API checks it too).
+  const admin = canAdmin(me);
   const [sources, setSources] = useState<Source[]>([]);
   const [loadingSources, setLoadingSources] = useState(true);
   const [scraping, setScraping] = useState(false);
@@ -278,7 +295,7 @@ export default function DashboardPage() {
               <p className="text-xs text-muted-foreground">Smart Job Discovery Platform</p>
             </div>
           </div>
-          <ViewerControl />
+          <ViewerControl me={me} />
         </div>
       </header>
 
@@ -291,12 +308,14 @@ export default function DashboardPage() {
                   <Search className="h-5 w-5 text-primary" />
                   Filters & Search
                 </CardTitle>
+                {admin && (
                 <Button
                   size="sm"
                   variant="ghost"
                   onClick={handleClearJobs}
                   disabled={clearingJobs}
                   className="text-muted-foreground hover:text-destructive"
+                  data-testid="admin-clear-jobs"
                 >
                   {clearingJobs ? (
                     <>
@@ -310,6 +329,7 @@ export default function DashboardPage() {
                     </>
                   )}
                 </Button>
+                )}
               </div>
             </CardHeader>
             <CardContent>
@@ -408,6 +428,7 @@ export default function DashboardPage() {
                         className="flex items-center justify-between rounded-lg border border-border/50 bg-secondary/30 px-3 py-2 text-sm transition-all hover:border-primary/30 hover:bg-secondary/50 hover:shadow-md"
                       >
                         <span className="font-medium">{s.name}</span>
+                        {admin && (
                         <Button
                           size="sm"
                           variant="outline"
@@ -426,11 +447,15 @@ export default function DashboardPage() {
                             </>
                           )}
                         </Button>
+                        )}
                       </li>
                     ))}
                   </ul>
                 )}
+                {admin && (
+                <>
                 <Button
+                  data-testid="admin-scrape-all"
                   className="mt-3 w-full font-semibold shadow-md hover:shadow-lg transition-all"
                   variant="secondary"
                   disabled={scraping || sources.length === 0}
@@ -475,10 +500,14 @@ export default function DashboardPage() {
                     <strong>Error:</strong> {scrapeError}
                   </div>
                 )}
+                </>
+                )}
             </CardContent>
           </Card>
 
-          <Card className="border-border/50 shadow-lg shadow-primary/5 animate-fade-in bg-gradient-to-br from-card to-card/50">
+          {admin && (
+          <>
+          <Card className="border-border/50 shadow-lg shadow-primary/5 animate-fade-in bg-gradient-to-br from-card to-card/50" data-testid="admin-test-data">
             <CardHeader className="pb-4">
               <CardTitle className="text-lg font-semibold flex items-center gap-2">
                 <Briefcase className="h-5 w-5 text-primary" />
@@ -517,7 +546,7 @@ export default function DashboardPage() {
             </CardContent>
           </Card>
 
-          <Card className="border-border/50 shadow-lg shadow-primary/5 animate-fade-in bg-gradient-to-br from-card to-card/50">
+          <Card className="border-border/50 shadow-lg shadow-primary/5 animate-fade-in bg-gradient-to-br from-card to-card/50" data-testid="admin-reanalyze">
             <CardHeader className="pb-4">
               <CardTitle className="text-lg font-semibold flex items-center gap-2">
                 <RefreshCw className="h-5 w-5 text-primary" />
@@ -574,9 +603,12 @@ export default function DashboardPage() {
             </CardContent>
           </Card>
 
+          </>
+          )}
+
           <TalentNetworks />
 
-          <RunsList key={runsRefresh} />
+          <RunsList key={runsRefresh} canClear={admin} />
         </div>
       </main>
     </div>
