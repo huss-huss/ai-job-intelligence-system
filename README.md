@@ -378,7 +378,7 @@ cheap. The throttle table stores a hash of the chat id, not the id. At most 20 m
 | Data | Who can read it |
 |---|---|
 | jobs, descriptions, the public score (`jobs_analysis`, from the deployment profile) | everyone (portfolio demo) |
-| your statuses, notes, feedback, talent-network progress, your scores, profile | you, in the bot and with your dashboard link |
+| your statuses, notes, feedback, talent-network progress, your scores, profile | you, in the bot, logged in on the dashboard, or with your dashboard link |
 | your resume (`/cv`) | you, in the bot (only sent to the model for your own cover letters; no API route returns it) |
 | the owner's | the owner (bot, `ADMIN_TOKEN`, or their own dashboard link) |
 | who the users are (`/users`) | the owner |
@@ -391,7 +391,8 @@ cheap. The throttle table stores a hash of the chat id, not the id. At most 20 m
   (`tests/test_privacy.py`); a new GET route fails that test until it's reviewed.
 - Tokens: `X-Admin-Token: <ADMIN_TOKEN>` is the owner. `X-User-Token` is a personal dashboard token from
   `/dashboard`: 32 random bytes, stored as SHA-256, shown once, replaced by the next `/dashboard`, revoked by
-  `/dashboard revoke`. It reads and writes only that user's tracker and talent networks; every other write
+  `/dashboard revoke` (both also end that user's web login sessions). A [web login](#web-login) session
+  cookie has the same rights. Either reads and writes only that user's tracker and talent networks; every other write
   still needs the admin token. All comparisons are constant-time. With no `ADMIN_TOKEN` configured, private
   data isn't readable over HTTP at all.
 - The dashboard link is `https://<dashboard>/#token=…`. The token is in the URL fragment, which browsers
@@ -403,13 +404,13 @@ cheap. The throttle table stores a hash of the chat id, not the id. At most 20 m
 - Logs never contain chat ids, names, invite codes or tokens (errors are logged by type only).
 
 **Data stored per user:** Telegram chat id, the first name Telegram sends (for `/users`), role, profile,
-digest settings and pause flag, join and last-seen times, the hash of their dashboard token, the resume they
+digest settings and pause flag, join and last-seen times, the hash of their dashboard token and of each web login session, the resume they
 sent with `/cv` (cover letters themselves are never stored); their
 statuses, notes and notification times (`applications`), talent-network statuses, and their score for each
 job (`user_job_scores`: fit, hire probability, rank, eligibility, reasons).
 
 **Removal:** `/remove <id>` (owner only) deletes the member and everything above: profile, resume, tracker,
-notes, feedback, talent-network statuses, scores and dashboard token. Invites they used stay as used, and their
+notes, feedback, talent-network statuses, scores, dashboard token and web login sessions. Invites they used stay as used, and their
 AI usage rows (date, model, token counts and cost, nothing they wrote) stay so the month's spend stays correct,
 both without a link to them. Their chat is a stranger again and is ignored. The owner can't be
 removed. Rolling back migration 004 also drops every member's data and keeps the owner's.
@@ -463,6 +464,76 @@ The page query with a token runs in about 1 ms on Postgres (`EXPLAIN ANALYZE`; a
 the 1316 score rows, and `tests/test_user_scores_api.py` checks it can use the primary key instead). The cron run
 gains a few milliseconds; the calls themselves are the same 30.
 
+
+### Web login
+
+Invited users can log in to the dashboard with Telegram instead of keeping a `/dashboard` link. The
+`/login` page shows Telegram's official [Login Widget](https://core.telegram.org/widgets/login); after
+the user confirms in Telegram, the page posts the signed result to `POST /api/auth/telegram`, and the
+header then shows their name, "Log out", and the private view ("Ranked for <name>", their statuses and
+status selects, their talent-network progress). Logged out, the dashboard is the same public view as
+before plus a "Log in" button. A `#token=` link still works, and its header offers "Stay logged in",
+which turns the link into a session (`POST /api/auth/token-session`) and forgets the token in that browser.
+
+**Owner setup** (once):
+
+1. In Telegram, send `/setdomain` to [@BotFather](https://t.me/BotFather), pick the bot and send the
+   dashboard's domain, `firstfetch-eight.vercel.app` (no `https://`). The widget only works on that domain.
+2. On the **dashboard** Vercel project, set the bot's username (without `@`) and redeploy, because
+   `NEXT_PUBLIC_*` values are built into the static export:
+   ```bash
+   cd frontend && vercel env add NEXT_PUBLIC_TELEGRAM_BOT_USERNAME production   # e.g. FirstFetchBot
+   ```
+3. The **API** project needs no new variable: it checks signatures with `TELEGRAM_BOT_TOKEN` and matches
+   the owner by `TELEGRAM_CHAT_ID`. Run `alembic upgrade head` once against the database for the
+   `sessions` table (migration `006_web_sessions`, see [Deploying to Vercel](#deploying-to-vercel)).
+
+**How it works and why it's safe**
+
+- *Signature.* The API checks the payload exactly as Telegram documents it: the data-check string is
+  every received field except `hash` as `key=value`, sorted and joined with newlines; the secret key is
+  `SHA256(bot_token)`; `hash` must equal the hex HMAC-SHA256 of the string (constant-time compare).
+  `auth_date` older than 10 minutes (or more than a minute in the future) is refused, so a captured
+  payload can't be replayed later. Without `TELEGRAM_BOT_TOKEN` the endpoint answers 503.
+- *Who may log in.* The widget's `id` is the Telegram user id. In a private chat a bot's chat id equals
+  the user id, and members only join from private chats, so the account matches the user whose
+  `telegram_chat_id` is that id. Everyone else (not invited, removed, or a tampered id) gets the same
+  403, "This Telegram account can't log in here", so the answer says nothing about who the users are.
+  User ids are positive; an owner whose `TELEGRAM_CHAT_ID` is a group can't use web login (their
+  `/dashboard` link and `ADMIN_TOKEN` still work).
+- *Sessions.* The cookie `ff_session` holds 32 random bytes (256 bits); the `sessions` table stores only
+  its SHA-256, with the user, creation, expiry and last-use times and a hash of the User-Agent. The cookie
+  is `HttpOnly; Secure; SameSite=Lax; Path=/`, host-only, for 30 days, sliding: a use more than an hour
+  after the last refresh moves the expiry to 30 days from then and resends the cookie. `vercel.json`
+  proxies `/api/*` through the dashboard's own domain, so the cookie is first-party there.
+- *Ending sessions.* "Log out" (`POST /api/auth/logout`) deletes the row and clears the cookie. A new
+  `/dashboard` link and `/dashboard revoke` log that user out everywhere, and `/remove` deletes their
+  sessions with the rest of their data. An expired session is deleted when it's next presented.
+- *What a session can do.* Exactly what the user's `X-User-Token` can: read their private data, get
+  `GET /api/jobs` ranked for them, and write their own tracker and talent networks
+  (`/api/applications/…`, `/api/talent-networks/…`) past the `ADMIN_TOKEN` write lock. Nothing else:
+  the owner's session is not the admin token, so scrapes, sources, analysis and deletes still need
+  `X-Admin-Token`. When a request carries `X-Admin-Token` or `X-User-Token`, that header decides who it
+  is and the cookie is ignored.
+- *CSRF.* A browser attaches cookies by itself, so every cookie-authenticated request other than
+  GET/HEAD/OPTIONS (and the login, logout and link-conversion POSTs) must carry the header
+  `X-Requested-With: firstfetch`, which the dashboard sends. We chose a custom header over a
+  double-submit token because it needs no token state: a page on another origin can't add a custom
+  header without a CORS preflight, which only the dashboard's origins pass, and an HTML form can't add
+  one at all. `SameSite=Lax` is a second layer. Without the header the API answers 403.
+- `GET /api/auth/session` says who is looking (`{"authenticated": false}` for the public, never 401), with
+  `Cache-Control: no-store`.
+
+| Login page | Logged in: ranked for the member, their statuses, "Log out" |
+|---|---|
+| ![The /login page with the Telegram login button](docs/screenshots/web-login.png) | ![Logged in as a member](docs/screenshots/web-login-logged-in.png) |
+
+The screenshots come from a local run with system Chrome (Playwright), the API and the static export on
+one origin, and a seeded Postgres. telegram.org isn't contacted there: the widget script is replaced by a
+local stand-in that draws the button and calls `data-onauth` with a payload signed with the test bot
+token, so the login, the not-invited message, logout, a `#token=` link turned into a session and a status
+change through the cookie were exercised end to end; the logged-in view uses a session cookie injected
+for a seeded user.
 
 ### Application tracker
 
@@ -633,6 +704,10 @@ docker compose -f infra/docker-compose.yml up -d --build
 | GET | /api/talent-networks | Talent-network catalog; your status only with a token |
 | PATCH | /api/talent-networks/{slug} | Set your status for one network (token required) |
 | GET | /api/me | Whose token this is (role, name). Token required |
+| POST | /api/auth/telegram | Telegram Login Widget payload; starts a session (`ff_session` cookie) for an invited user, else 403 |
+| POST | /api/auth/token-session | Turn a valid `X-User-Token` into a session |
+| POST | /api/auth/logout | End the session and clear the cookie |
+| GET | /api/auth/session | Who is looking (`authenticated`, role, name, via); never 401 |
 | POST | /api/telegram/webhook | Telegram updates (secret header required) |
 
 `eligible` filters on the stored location eligibility: `any` (default), or a comma-separated subset of `true`, `false`, `unknown`. Jobs whose posting doesn't say who can apply, or that aren't analyzed yet, count as `unknown`. The dashboard requests `eligible=true,unknown` and reads the size of the hidden set from `eligible=false&page_size=1`.
@@ -718,6 +793,17 @@ python -m worker.cli telegram-setup --url https://<your-api-project>.vercel.app 
 ```
 
 Set the $1 monthly limit on the OpenAI project too; the local guard stops at $0.80 either way.
+
+### Web login (migration 006)
+
+`006_web_sessions` adds the `sessions` table and changes nothing else; downgrading drops it, which logs
+everyone out of the dashboard. Then set up the widget ([Web login](#web-login)):
+
+```bash
+DATABASE_URL=<unpooled url> alembic -c backend/alembic.ini upgrade head
+# Telegram: /setdomain to @BotFather -> firstfetch-eight.vercel.app
+cd frontend && vercel env add NEXT_PUBLIC_TELEGRAM_BOT_USERNAME production && vercel deploy --prod
+```
 
 ## Limitations and next steps
 
