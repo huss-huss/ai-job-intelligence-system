@@ -296,7 +296,7 @@ function JobCard({ job, status, onStatus }: { job: Job; status: ApplicationStatu
       {(job.description || match) && (
         <CardContent className="pt-0">
           {job.description && (
-            <p className="line-clamp-2 text-sm text-muted-foreground leading-relaxed">{job.description}</p>
+            <p className="line-clamp-2 text-sm text-muted-foreground leading-relaxed [overflow-wrap:anywhere]">{job.description}</p>
           )}
           {match && <WhyThisScore match={match} hire={hire} rank={rank} />}
         </CardContent>
