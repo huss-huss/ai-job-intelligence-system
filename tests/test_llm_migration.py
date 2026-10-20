@@ -16,9 +16,9 @@ from tests.test_tracker_migration import OWN_TABLES, _check
 SCHEMA = "firstfetch_llm_budget_test"
 
 
-def test_005_is_the_single_head_after_004():
+def test_005_follows_004_on_a_single_head():
     script = ScriptDirectory.from_config(alembic_config())
-    assert script.get_heads() == ["005_llm_budget"]
+    assert len(script.get_heads()) == 1
     assert script.get_revision("005_llm_budget").down_revision == "004_multi_user"
 
 
@@ -60,7 +60,6 @@ def test_sqlite_upgrade_downgrade_keeps_other_rows(tmp_path):
         uid = _seed_004(conn)
     with engine.begin() as conn:
         command.upgrade(alembic_config(conn), "005_llm_budget")
-        _check(conn)
         assert {"resume_text", "resume_updated_at"} <= {c["name"] for c in inspect(conn).get_columns("users")}
     with engine.begin() as conn:
         command.downgrade(alembic_config(conn), "004_multi_user")
@@ -70,6 +69,7 @@ def test_sqlite_upgrade_downgrade_keeps_other_rows(tmp_path):
         assert conn.execute(text("SELECT count(*) FROM user_job_scores")).scalar() == 1
     with engine.begin() as conn:
         command.upgrade(alembic_config(conn), "head")
+        _check(conn)  # `alembic check` compares the models with head only
         _use_005(conn, uid)
 
 

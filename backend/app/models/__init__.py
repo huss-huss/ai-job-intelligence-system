@@ -8,6 +8,7 @@ from app.models.run import Run
 from app.models.source import Source
 from app.models.tracker import AppSetting, Application, TalentNetworkStatus
 from app.models.user import AuthThrottle, Invite, User, UserJobScore
+from app.models.web_session import WebSession
 
 __all__ = [
     "Source",
@@ -24,4 +25,5 @@ __all__ = [
     "AuthThrottle",
     "UserJobScore",
     "LlmUsage",
+    "WebSession",
 ]
