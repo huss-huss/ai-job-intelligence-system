@@ -41,3 +41,24 @@ jobs:
         run: pytest -rs
         env:
           TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5433/scratch
+
+  frontend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type-check and build the static export
+        run: npx tsc --noEmit && npm run build

@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/huss-huss/ai-job-intelligence-system/actions/workflows/ci.yml/badge.svg)](https://github.com/huss-huss/ai-job-intelligence-system/actions/workflows/ci.yml)
 
-**Live demo:** [firstfetch-eight.vercel.app](https://firstfetch-eight.vercel.app) (read-only; refreshed daily by Vercel Cron) · API: [firstfetch-api.vercel.app/api/docs](https://firstfetch-api.vercel.app/api/docs)
+**Live demo:** [firstfetch-eight.vercel.app](https://firstfetch-eight.vercel.app) (private: invite-only, log in with Telegram; refreshed daily by Vercel Cron). Logged out you only see the [login page](docs/screenshots/private-login-1400.png); the screenshots below show what's behind it. The API is private too, and its interactive docs are off in production (run it locally for `/api/docs`).
 
 FirstFetch pulls listings from public job APIs, scores each one against **your** profile with an explainable 0–100 score, and sends the strong matches to Notion.
 
@@ -332,8 +332,9 @@ field escaped, and lists longer than 4096 characters are split between whole lin
    `DATABASE_URL=... python -m worker.cli telegram-digest --dry-run` prints what the digest would send now.
 
 The webhook (`POST /api/telegram/webhook`) only accepts requests carrying the secret in Telegram's
-`X-Telegram-Bot-Api-Secret-Token` header (compared in constant time). That header is also the only way
-past the `ADMIN_TOKEN` write lock, and only for this one path. Updates from any chat that isn't a user are
+`X-Telegram-Bot-Api-Secret-Token` header (compared in constant time). The path needs no login (it's on the
+public allowlist, see [Multi-user](#multi-user)), so that secret is its only lock; elsewhere the header opens
+nothing. Updates from any chat that isn't a user are
 ignored without a reply, except an invite code (see [Multi-user](#multi-user)).
 
 | Variable | Default | |
@@ -377,28 +378,49 @@ cheap. The throttle table stores a hash of the chat id, not the id. At most 20 m
 
 | Data | Who can read it |
 |---|---|
-| jobs, descriptions, the public score (`jobs_analysis`, from the deployment profile) | everyone (portfolio demo) |
+| jobs, descriptions, sources, run history, the talent-network catalog | anyone logged in (Telegram login, a dashboard link or `ADMIN_TOKEN`); nobody logged out |
 | your statuses, notes, feedback, talent-network progress, your scores, profile | you, in the bot, logged in on the dashboard, or with your dashboard link |
 | your resume (`/cv`) | you, in the bot (only sent to the model for your own cover letters; no API route returns it) |
-| the owner's | the owner (bot, `ADMIN_TOKEN`, or their own dashboard link) |
+| the owner's | the owner (bot, `ADMIN_TOKEN`, their login session, or their own dashboard link) |
+| per-user details of digest and LLM runs | the owner (members see the totals) |
 | who the users are (`/users`) | the owner |
 
-- `GET /api/applications` and `GET /api/me` answer 401 without a token; `GET /api/talent-networks` returns the
-  platform list without anyone's progress; `GET /api/jobs?status=` needs a token (the filter would reveal what
-  someone applied to), and job payloads never carry tracker fields; telegram runs in `GET /api/runs` show the
-  public only totals, and LLM enrichment runs show the per-user extraction counts only to the owner. A token
-  scores `GET /api/jobs` for its own user and nobody else (`tests/test_user_scores_api.py`). Tests seed every kind of private data for two users and call every GET route
-  (`tests/test_privacy.py`); a new GET route fails that test until it's reviewed.
+- **The whole site is private.** Every data endpoint (`/api/jobs`, `/api/jobs/{id}`, `/api/sources`,
+  `/api/sources/{id}`, `/api/runs`, `/api/talent-networks`, `/api/applications`, `/api/me`) answers 401
+  `{"detail": "Log in to see this", "authenticated": false}` without a valid login: no data, no counts. Two
+  layers: a middleware in `backend/main.py` refuses any `/api/` request without credentials unless its path
+  is on the public allowlist, and every route checks the credentials itself (`require_viewer` in
+  `backend/app/auth.py`), so a wrong token gets the same 401.
+- **The public allowlist** (`main.PUBLIC_PATHS`), each with its own check: `GET /api/health`;
+  `GET /api/auth/session` (`{"authenticated": false}`); `POST /api/auth/telegram`, `/api/auth/token-session`
+  and `/api/auth/logout` (signature or token, plus the CSRF header); `POST /api/telegram/webhook` (Telegram's
+  secret header); `GET /api/cron/discover` (`CRON_SECRET`). `/api/docs`, `/api/redoc` and
+  `/api/openapi.json` exist only when the docs are on: by default on locally and off on Vercel (`API_DOCS=true`
+  turns them on). The schema holds no data and the routes are in this repo anyway, but a private deployment
+  has no reason to advertise them.
+- Logged in, everyone sees only their own: job scores are the viewer's (`tests/test_user_scores_api.py`),
+  `GET /api/jobs?status=` filters the viewer's own tracker, job payloads never carry tracker fields, telegram
+  runs in `GET /api/runs` show members only the totals and LLM enrichment runs show the per-user extraction
+  counts only to the owner. `tests/test_privacy.py` seeds every kind of private data for two users, lists the
+  public allowlist explicitly and classifies every GET route as public or private: a new GET route fails it
+  until it's classified, every private one must answer 401 logged out (no credentials, wrong tokens, a forged
+  cookie), and a logged-in user with no data of their own must see nobody else's.
+- **Admin operations** (scrape, analyze, add or edit sources, clear jobs or runs) need the owner
+  (`require_owner`): `X-Admin-Token`, or the owner's own login session with the CSRF header. A member's session
+  or link gets 403, and so does the owner's `/dashboard` link token (a link lives in URLs and browser storage,
+  so it stays a tracker-only credential). `tests/test_private_site.py` lists every write route and checks each
+  of them for the public, a member session, a member link, the owner's link, the owner's session (with and
+  without the CSRF header) and the admin token.
 - Tokens: `X-Admin-Token: <ADMIN_TOKEN>` is the owner. `X-User-Token` is a personal dashboard token from
   `/dashboard`: 32 random bytes, stored as SHA-256, shown once, replaced by the next `/dashboard`, revoked by
   `/dashboard revoke` (both also end that user's web login sessions). A [web login](#web-login) session
-  cookie has the same rights. Either reads and writes only that user's tracker and talent networks; every other write
-  still needs the admin token. All comparisons are constant-time. With no `ADMIN_TOKEN` configured, private
-  data isn't readable over HTTP at all.
+  cookie has the same rights, plus the admin operations for the owner's session. A member reads the job data
+  and writes only their own tracker and talent networks. All comparisons are constant-time. Nothing depends
+  on `ADMIN_TOKEN` being set: without it only login sessions and dashboard links work over HTTP.
 - The dashboard link is `https://<dashboard>/#token=…`. The token is in the URL fragment, which browsers
-  never send to a server; the dashboard moves it to localStorage and strips it from the address bar. Without
-  a token the dashboard is the public view: no status selects, badges or filters, and the talent-network
-  list without progress. "Public view" in the header forgets the token on that browser.
+  never send to a server; the dashboard strips it from the address bar and turns it into a login session
+  right away (`POST /api/auth/token-session`), so the token isn't kept in the browser. Without a login the
+  dashboard renders nothing but a spinner and sends the visitor to `/login`.
 - Owner-only commands (`/invite`, `/users`, `/remove`) check the role on every call; to a member they are
   "Unknown command".
 - Logs never contain chat ids, names, invite codes or tokens (errors are logged by type only).
@@ -469,11 +491,27 @@ gains a few milliseconds; the calls themselves are the same 30.
 
 Invited users can log in to the dashboard with Telegram instead of keeping a `/dashboard` link. The
 `/login` page shows Telegram's official [Login Widget](https://core.telegram.org/widgets/login); after
-the user confirms in Telegram, the page posts the signed result to `POST /api/auth/telegram`, and the
-header then shows their name, "Log out", and the private view ("Ranked for <name>", their statuses and
-status selects, their talent-network progress). Logged out, the dashboard is the same public view as
-before plus a "Log in" button. A `#token=` link still works, and its header offers "Stay logged in",
-which turns the link into a session (`POST /api/auth/token-session`) and forgets the token in that browser.
+the user confirms in Telegram, the page posts the signed result to `POST /api/auth/telegram` and returns
+to `/`, where the header shows their name and "Log out" above their private view ("Ranked for <name>",
+their statuses and status selects, their talent-network progress).
+
+**Logged out there is nothing to see.** `/` calls `GET /api/auth/session` first and renders only a spinner
+until it answers; without a login it goes straight to `/login`, so no job, source or run is ever on screen
+(the Playwright check records every text the page shows from the first paint). The static HTML of `/` holds
+no data either: everything comes from the API, which answers 401. `/login` is the only public page. A
+`#token=` link from the bot still works: the dashboard turns it into a session on arrival and forgets the
+token.
+
+**Admin controls.** The header never has an admin-token field. The owner, logged in with Telegram, sees
+Scrape / Scrape all, Clear jobs, Clear (run history), Test data and Re-analyze, and they work with the
+session alone: each request carries the CSRF header, and the API checks that the session is the owner's
+(`require_owner`). Members never see them, and the API answers 403 if a member calls them anyway. We chose
+the owner's session over pasting the admin token because it's the stronger setup: the session cookie is
+`HttpOnly` (page scripts can't read it, while a pasted token sits in `localStorage`), it's tied to the
+owner's Telegram account, expires, and is revoked by "Log out" or a new `/dashboard`; the CSRF header keeps
+other sites from using it. For a deployment without Telegram login, `/login` has a collapsed "Owner: use the
+admin token instead" form: the token is checked with the API, kept in that browser's `localStorage` and sent
+as `X-Admin-Token` until "Log out". `X-Admin-Token` keeps working for scripts and `curl`.
 
 **Owner setup** (once):
 
@@ -509,12 +547,11 @@ which turns the link into a session (`POST /api/auth/token-session`) and forgets
 - *Ending sessions.* "Log out" (`POST /api/auth/logout`) deletes the row and clears the cookie. A new
   `/dashboard` link and `/dashboard revoke` log that user out everywhere, and `/remove` deletes their
   sessions with the rest of their data. An expired session is deleted when it's next presented.
-- *What a session can do.* Exactly what the user's `X-User-Token` can: read their private data, get
+- *What a session can do.* What the user's `X-User-Token` can: read the dashboard's data, get
   `GET /api/jobs` ranked for them, and write their own tracker and talent networks
-  (`/api/applications/…`, `/api/talent-networks/…`) past the `ADMIN_TOKEN` write lock. Nothing else:
-  the owner's session is not the admin token, so scrapes, sources, analysis and deletes still need
-  `X-Admin-Token`. When a request carries `X-Admin-Token` or `X-User-Token`, that header decides who it
-  is and the cookie is ignored.
+  (`/api/applications/…`, `/api/talent-networks/…`). The owner's session can also run the admin operations
+  (see above); a member's can't. When a request carries `X-Admin-Token` or `X-User-Token`, that header
+  decides who it is and the cookie is ignored.
 - *CSRF.* A browser attaches cookies by itself, so every cookie-authenticated request other than
   GET/HEAD/OPTIONS (and the login, logout and link-conversion POSTs) must carry the header
   `X-Requested-With: firstfetch`, which the dashboard sends. We chose a custom header over a
@@ -524,21 +561,25 @@ which turns the link into a session (`POST /api/auth/token-session`) and forgets
 - `GET /api/auth/session` says who is looking (`{"authenticated": false}` for the public, never 401), with
   `Cache-Control: no-store`.
 
-| Login page | Logged in: ranked for the member, their statuses, "Log out" |
-|---|---|
-| ![The /login page with the Telegram login button](docs/screenshots/web-login.png) | ![Logged in as a member](docs/screenshots/web-login-logged-in.png) |
-| ![390px header, logged out: title, then the admin-token field and Log in](docs/screenshots/web-login-header-390-logged-out.png) | ![390px header, logged in: title, then the name and Log out](docs/screenshots/web-login-header-390-logged-in.png) |
+| Logged out: `/` goes here, nothing else is public | A member: their ranking and statuses, no admin controls | The owner: the admin controls, no token to paste |
+|---|---|---|
+| ![The /login page: "This dashboard is private", the Telegram login button and the owner's admin-token fallback, collapsed](docs/screenshots/private-login-1400.png) | ![Logged in as a member: name and Log out in the header, jobs ranked for them, sources without scrape buttons](docs/screenshots/private-member-1400.png) | ![Logged in as the owner: Clear jobs, Scrape, Scrape all, Test data and Re-analyze](docs/screenshots/private-owner-1400.png) |
+| ![390px: the login page](docs/screenshots/private-login-390.png) | ![390px: a member's view](docs/screenshots/private-member-390.png) | ![390px: the owner's view](docs/screenshots/private-owner-390.png) |
 
-On a 390px phone the header wraps: the title stays on one line and the login controls move under it. The
-page is exactly as wide as the viewport (`document.documentElement.scrollWidth`) at 390, 768 and 1400px,
-logged out and logged in, on `/` and `/login`.
+On a 390px phone the header wraps: the title stays on one line and the name and "Log out" move under it.
+The page is exactly as wide as the viewport (`document.documentElement.scrollWidth`) at 390 and 1400px,
+logged out on `/login` and logged in on `/`, for a member and the owner.
 
 The screenshots come from a local run with system Chrome (Playwright), the API and the static export on
-one origin, and a seeded Postgres. telegram.org isn't contacted there: the widget script is replaced by a
-local stand-in that draws the button and calls `data-onauth` with a payload signed with the test bot
-token, so the login, the not-invited message, logout, a `#token=` link turned into a session and a status
-change through the cookie were exercised end to end; the logged-in view uses a session cookie injected
-for a seeded user.
+one origin, and a seeded Postgres (46 checks). telegram.org isn't contacted there: the widget script is
+replaced by a local stand-in that draws the button and calls `data-onauth` with a payload signed with the
+test bot token. Exercised end to end: logged out `/` redirects to `/login` with no job text ever rendered
+and no job data fetched (`fetch('/api/jobs')` from the page gets 401 without counts); a member logs in with
+the widget, sees their ranked jobs and no admin controls, gets 403 from `POST /api/analyze`, and "Log out"
+returns to `/login` for good; a `#token=` link becomes an `ff_session` cookie with nothing left in
+`localStorage`; the owner's session (an injected cookie for the seeded owner) shows every admin control and
+"Re-analyze" succeeds with no admin token stored; the admin-token fallback refuses a wrong token, logs the
+owner in with the right one, and "Log out" forgets it.
 
 ### Application tracker
 
@@ -548,8 +589,8 @@ the `applications` table (one row per user and job, migrations `003_tracker` and
 from the scraped data, so re-scraping or re-analyzing never touches it. Set it from the Telegram buttons, `/status`, the select on each dashboard
 card, or the API (`GET /api/applications?status=saved,applied`, `PATCH /api/applications/{job_id}` with
 `{"status": "applied", "notes": "..."}`). The dashboard hides jobs marked "not for me" by default; the
-status filter brings them back. All of it is private: the API needs the admin token or your personal
-dashboard token, and the public dashboard shows no statuses (see [Multi-user](#multi-user)).
+status filter brings them back. All of it is private: the API needs your login (session, personal
+dashboard token or the admin token) and only ever returns your own (see [Multi-user](#multi-user)).
 
 **Feedback learning** (`backend/app/tracker.py`) is a small, fixed rule, not a model. When ranking the
 digest and `/top`, each job is compared with the jobs you reacted to (yours only; another user's 👎 never
@@ -574,14 +615,11 @@ python)") and the score shows both numbers ("Score 63 (58 + 5 feedback)"). The s
 The dashboard's **Talent networks** card lists platforms where one application and one vetting process
 can lead to many remote roles: Andela, Turing, Toptal, micro1, Mercor and Arc.dev, each with a one-line
 description and a link. Your status per platform (not started / applied / vetted / active) is stored per user
-in the `talent_networks` table; `GET /api/talent-networks` (the list for everyone, your status only with a
-token), `PATCH /api/talent-networks/{slug}` with `{"status": "vetted"}` (token required). The public
-dashboard shows the platform list only. The descriptions say what each platform is,
-not how likely you are to get in.
+in the `talent_networks` table; `GET /api/talent-networks` (the list with your status; login required),
+`PATCH /api/talent-networks/{slug}` with `{"status": "vetted"}`. The descriptions say what each platform
+is, not how likely you are to get in.
 
-| Public view | A member's private view (`/dashboard` link) |
-|---|---|
-| ![Public dashboard: no statuses, talent networks without progress](docs/screenshots/public-dashboard-no-statuses.png) | ![A member's private view with their own statuses](docs/screenshots/private-dashboard-member.png) |
+![A member's private view with their own statuses](docs/screenshots/private-dashboard-member.png)
 
 ### Repairing stored text
 
@@ -598,8 +636,8 @@ DATABASE_URL=postgresql://... python -m worker.cli repair-text             # app
 
 ```bash
 pip install pytest ruff
-pytest          # 600 tests (+5 skipped without Postgres), offline: adapters run against trimmed real API responses and saved HTML pages; Telegram against a fake Bot API and OpenAI against a fake chat-completions API (both httpx.MockTransport, the real openai SDK); migrations on SQLite
-TEST_DATABASE_URL=postgresql://postgres@localhost:5433/scratch pytest   # +5: eligibility filter (drops and recreates the job tables), the private jobs query (index, statement count, per-user eligibility), the migrations (schema, multi-user data migration, LLM budget) and the budget guard's advisory lock, in a throwaway schema, on a real Postgres
+pytest          # 661 tests (+6 skipped without Postgres), offline: adapters run against trimmed real API responses and saved HTML pages; Telegram against a fake Bot API and OpenAI against a fake chat-completions API (both httpx.MockTransport, the real openai SDK); migrations on SQLite
+TEST_DATABASE_URL=postgresql://postgres@localhost:5433/scratch pytest   # +6: eligibility filter (drops and recreates the job tables), the private jobs query (index, statement count, per-user eligibility), the migrations (schema, multi-user data migration, LLM budget, web sessions) and the budget guard's advisory lock, in a throwaway schema, on a real Postgres
 ruff check worker tests
 ```
 
@@ -611,6 +649,7 @@ ruff check worker tests
 
 ```bash
 cp infra/.env.example .env
+# Set ADMIN_TOKEN: the dashboard is private, so you log in with it on /login (or with Telegram) to see data
 # Optional: OPENAI_API_KEY (or LLM_BASE_URL for a local model), NOTION_TOKEN, NOTION_DATABASE_ID
 ```
 
@@ -650,7 +689,7 @@ cd backend
 uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-API: http://localhost:8000 — Docs: http://localhost:8000/api/docs
+API: http://localhost:8000 — Docs: http://localhost:8000/api/docs (on locally; off on Vercel unless `API_DOCS=true`)
 
 ### 5. Worker
 
@@ -694,26 +733,34 @@ docker compose -f infra/docker-compose.yml up -d --build
 
 ## API overview
 
+Every endpoint needs a login (the `ff_session` cookie, `X-User-Token` or `X-Admin-Token`) unless it's
+marked **public**; without one it answers 401. **Owner** endpoints also need the owner: `X-Admin-Token`, or
+the owner's session with `X-Requested-With: firstfetch` (403 for anyone else).
+
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET | /api/health | Health check |
+| GET | /api/health | Health check (**public**) |
 | GET | /api/sources | List sources |
-| POST | /api/sources | Create source |
-| POST | /api/sources/{id}/scrape | Enqueue scrape for one source |
-| POST | /api/scrape | Enqueue scrape (all or body `source_id`) |
-| GET | /api/jobs | List jobs (filter: source, min_score, q, eligible, status, page; sort: rank, score or recent). With a token: scored, sorted and filtered for that user |
-| GET | /api/jobs/{id} | Job detail |
-| GET | /api/runs | List scrape/analyze/telegram runs |
-| GET | /api/applications | Tracked jobs (filter: status). **Private**: token required |
-| PATCH | /api/applications/{job_id} | Set status and/or notes (token required) |
-| GET | /api/talent-networks | Talent-network catalog; your status only with a token |
-| PATCH | /api/talent-networks/{slug} | Set your status for one network (token required) |
-| GET | /api/me | Whose token this is (role, name). Token required |
-| POST | /api/auth/telegram | Telegram Login Widget payload; starts a session (`ff_session` cookie) for an invited user, else 403 |
-| POST | /api/auth/token-session | Turn a valid `X-User-Token` into a session |
-| POST | /api/auth/logout | End the session and clear the cookie |
-| GET | /api/auth/session | Who is looking (`authenticated`, role, name, via); never 401 |
-| POST | /api/telegram/webhook | Telegram updates (secret header required) |
+| POST | /api/sources | Create source (**owner**) |
+| PATCH | /api/sources/{id} | Edit a source (**owner**) |
+| POST | /api/sources/{id}/scrape | Enqueue scrape for one source (**owner**) |
+| POST | /api/scrape | Enqueue scrape, all or body `source_id` (**owner**) |
+| POST | /api/analyze | Re-analyze all jobs or body `job_ids` (**owner**) |
+| GET | /api/jobs | List jobs (filter: source, min_score, q, eligible, status, page; sort: rank, score or recent), scored, sorted and filtered for the viewer |
+| GET | /api/jobs/{id} | Job detail, scored for the viewer |
+| DELETE | /api/jobs, /api/runs | Clear all jobs or all runs (**owner**) |
+| GET | /api/runs | List scrape/analyze/telegram runs (per-user details for the owner only) |
+| GET | /api/applications | Your tracked jobs (filter: status) |
+| PATCH | /api/applications/{job_id} | Set your status and/or notes |
+| GET | /api/talent-networks | Talent-network catalog with your status |
+| PATCH | /api/talent-networks/{slug} | Set your status for one network |
+| GET | /api/me | Who is logged in (role, name) |
+| POST | /api/auth/telegram | Telegram Login Widget payload; starts a session (`ff_session` cookie) for an invited user, else 403 (**public**) |
+| POST | /api/auth/token-session | Turn a valid `X-User-Token` into a session (**public**) |
+| POST | /api/auth/logout | End the session and clear the cookie (**public**) |
+| GET | /api/auth/session | Who is looking (`authenticated`, role, name, via); never 401 (**public**) |
+| POST | /api/telegram/webhook | Telegram updates (**public**, Telegram's secret header required) |
+| GET | /api/cron/discover | Daily discovery (**public**, `Authorization: Bearer <CRON_SECRET>` required) |
 
 `eligible` filters on the stored location eligibility: `any` (default), or a comma-separated subset of `true`, `false`, `unknown`. Jobs whose posting doesn't say who can apply, or that aren't analyzed yet, count as `unknown`. The dashboard requests `eligible=true,unknown` and reads the size of the hidden set from `eligible=false&page_size=1`.
 
@@ -725,7 +772,7 @@ docker compose -f infra/docker-compose.yml up -d --build
 
 ```bash
 curl -X POST http://localhost:8000/api/sources \
-  -H "Content-Type: application/json" \
+  -H "Content-Type: application/json" -H "X-Admin-Token: $ADMIN_TOKEN" \
   -d '{"name": "Remotive · Python", "base_url": "https://remotive.com", "config": {"type": "remotive", "search": "python"}}'
 ```
 
@@ -734,7 +781,7 @@ Sources created before adapters existed (no `config.type`) keep working through 
 Then trigger a scrape from the dashboard or:
 
 ```bash
-curl -X POST http://localhost:8000/api/scrape -H "Content-Type: application/json" -d '{}'
+curl -X POST http://localhost:8000/api/scrape -H "Content-Type: application/json" -H "X-Admin-Token: $ADMIN_TOKEN" -d '{}'
 ```
 
 ---
@@ -754,14 +801,14 @@ vercel integration add neon                     # provisions Postgres and sets D
 DATABASE_URL=<unpooled url> alembic -c backend/alembic.ini upgrade head
 vercel env add QUEUE_MODE production            # inline: no Redis/RQ worker on serverless
 vercel env add CRON_SECRET production           # Vercel Cron sends it as a Bearer token
-vercel env add ADMIN_TOKEN production           # makes the public deployment read-only
+vercel env add ADMIN_TOKEN production           # the owner's API key (scripts, curl, the /login fallback)
 vercel deploy --prod
 cd frontend && vercel link --project firstfetch && vercel deploy --prod
 ```
 
-Writes against a deployment with `ADMIN_TOKEN` need the header `X-Admin-Token: <token>`. Tracker statuses,
-notes and talent-network progress are private everywhere: they're only returned with a token, and with no
-`ADMIN_TOKEN` configured they aren't readable over HTTP at all. For Telegram
+Everything is private: reads need a login (or `X-Admin-Token`), admin writes the owner's session or
+`X-Admin-Token`, with or without `ADMIN_TOKEN` configured. The interactive API docs are off on Vercel; set
+`API_DOCS=true` on the API project to turn them on (they hold no data, only the route list). For Telegram
 alerts add `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET` and `TELEGRAM_CHAT_ID` (see
 [Telegram alerts](#telegram-alerts)), and run `alembic upgrade head` once for the tracker tables.
 
