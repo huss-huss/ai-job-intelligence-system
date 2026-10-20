@@ -8,9 +8,10 @@
   (50 per hour across every chat, then redemption pauses for an hour). The per-chat key is a hash
   of the chat id, so the throttle table stores nothing that identifies anyone.
 * Removing a member deletes them and everything they own (tracker, talent networks, scores, resume,
-  their dashboard token); invites they used and their AI usage rows (token counts and cost only)
+  their dashboard token and login sessions); invites they used and their AI usage rows (token counts and cost only)
   keep no link to them.
-* The personal dashboard token (/dashboard) is 32 random bytes, stored as SHA-256 only.
+* The personal dashboard token (/dashboard) is 32 random bytes, stored as SHA-256 only. Issuing a new
+  one or revoking it also ends the user's dashboard login sessions (app/web_sessions.py).
 
 Nothing here logs chat ids, names, codes or tokens.
 """
@@ -38,6 +39,7 @@ from app.models import (
     TalentNetworkStatus,
     User,
     UserJobScore,
+    WebSession,
 )
 
 if TYPE_CHECKING:
@@ -123,6 +125,7 @@ def delete_user_data(session: Session, user_id: int) -> None:
     session.execute(delete(Application).where(Application.user_id == user_id))
     session.execute(delete(TalentNetworkStatus).where(TalentNetworkStatus.user_id == user_id))
     session.execute(delete(UserJobScore).where(UserJobScore.user_id == user_id))
+    session.execute(delete(WebSession).where(WebSession.user_id == user_id))  # logged out of the dashboard
     session.execute(update(Invite).where(Invite.used_by == user_id).values(used_by=None))
     # Spend already made still counts toward the month: the ledger rows (tokens, cost) lose the link.
     session.execute(update(LlmUsage).where(LlmUsage.user_id == user_id).values(user_id=None))
@@ -294,15 +297,26 @@ def redeem_invite(
 
 
 def issue_dashboard_token(session: Session, user: User) -> str:
-    """A new personal dashboard token (the previous one stops working). Shown once."""
+    """A new personal dashboard token (the previous one stops working). Shown once.
+
+    Rotating the link also ends every dashboard login session of this user: /dashboard is the
+    "log out everywhere" lever if a link or a browser was exposed.
+    """
+    from app.web_sessions import revoke_user_sessions
+
     token = secrets.token_urlsafe(DASHBOARD_TOKEN_BYTES)
     user.dashboard_token_hash = hash_secret(token)
+    revoke_user_sessions(session, user.id)
     session.flush()
     return token
 
 
 def revoke_dashboard_token(session: Session, user: User) -> None:
+    """Turn the link off; like a rotation, this also ends the user's dashboard login sessions."""
+    from app.web_sessions import revoke_user_sessions
+
     user.dashboard_token_hash = None
+    revoke_user_sessions(session, user.id)
     session.flush()
 
 

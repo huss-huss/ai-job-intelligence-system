@@ -96,6 +96,7 @@ def _public_gets(job_id: int, source_id: int) -> list[str]:
         "/api/applications": ["/api/applications", "/api/applications?status=interviewing"],
         "/api/talent-networks": ["/api/talent-networks"],
         "/api/me": ["/api/me"],
+        "/api/auth/session": ["/api/auth/session"],
         "/api/cron/discover": [],  # CRON_SECRET; covered in test_telegram_digest
     }
     routes = {r.path for r in main.app.routes if isinstance(r, APIRoute) and "GET" in r.methods}

@@ -276,7 +276,9 @@ def cmd_dashboard(ctx: Ctx, args) -> None:
     if args and args[0].lower() == "revoke":
         users.revoke_dashboard_token(ctx.session, ctx.user)
         ctx.session.commit()
-        ctx.send("Your dashboard link no longer works. /dashboard makes a new one.")
+        ctx.send(
+            "Your dashboard link no longer works and you're logged out of the dashboard. /dashboard makes a new link."
+        )
         return
     base = safe_url(ctx.settings.dashboard_url)
     if not base:
@@ -288,7 +290,8 @@ def cmd_dashboard(ctx: Ctx, args) -> None:
     ctx.send(
         "<b>Your private dashboard link</b> (shown once; anyone with it sees your statuses):\n"
         f'<a href="{esc(link)}">Open your dashboard</a>\n<code>{esc(link)}</code>\n\n'
-        "A new /dashboard replaces it; /dashboard revoke turns it off."
+        "A new /dashboard replaces it; /dashboard revoke turns it off. Both also log you out of the dashboard "
+        "everywhere."
     )
 
 
@@ -338,7 +341,7 @@ def cmd_remove(ctx: Ctx, args) -> None:
     ctx.session.commit()
     ctx.send(
         f"Removed {esc(users.label(removed), 64)} (#{user_id}): their profile, tracker, feedback, talent-network "
-        "statuses, scores and dashboard link are deleted. Their chat is ignored from now on."
+        "statuses, scores, dashboard link and dashboard logins are deleted. Their chat is ignored from now on."
     )
 
 

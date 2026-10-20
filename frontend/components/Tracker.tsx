@@ -1,19 +1,22 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import {
   APPLICATION_STATUSES,
   AUTH_EVENT,
   captureTokenFromUrl,
+  convertTokenToSession,
   fetchMe,
   getAdminToken,
+  logout,
   setAdminToken,
   setUserToken,
   type ApplicationStatus,
   type Me,
 } from "@/lib/api";
 import { cn } from "@/lib/utils";
-import { KeyRound, Lock, LogOut } from "lucide-react";
+import { KeyRound, Lock, LogIn, LogOut, UserRound } from "lucide-react";
 
 export const STATUS_META: Record<ApplicationStatus, { label: string; cls: string }> = {
   new: { label: "New", cls: "bg-secondary/80 text-muted-foreground border-border/50" },
@@ -122,9 +125,9 @@ export function AdminTokenField() {
       <input
         type="password"
         autoComplete="off"
-        placeholder="Admin token (private view)"
+        placeholder="Admin token"
         aria-label="Admin token"
-        className="w-44 rounded-md border border-border/50 bg-secondary/50 px-2 py-1 text-xs placeholder:text-muted-foreground/60 focus:border-primary focus:outline-none"
+        className="w-36 sm:w-44 rounded-md border border-border/50 bg-secondary/50 px-2 py-1 text-xs placeholder:text-muted-foreground/60 focus:border-primary focus:outline-none"
         value={value}
         onChange={(e) => setValue(e.target.value)}
         onBlur={() => {
@@ -136,12 +139,32 @@ export function AdminTokenField() {
   );
 }
 
+const pillCls = "inline-flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 text-emerald-300";
+const ghostCls =
+  "inline-flex items-center gap-1 rounded-md border border-border/50 px-2 py-1 text-muted-foreground hover:text-foreground hover:border-primary/30 transition-colors";
+
+/** "Log in" in the header: the Telegram login page. */
+export function LoginButton() {
+  return (
+    <Link
+      href="/login"
+      className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground shadow-md hover:opacity-90"
+    >
+      <LogIn className="h-3.5 w-3.5" aria-hidden="true" />
+      Log in
+    </Link>
+  );
+}
+
 /**
- * Header control: "Private view: <name>" with a sign-out button when a valid token is stored,
- * otherwise the admin-token field. Also picks up a personal link's #token=... on first load.
+ * Header control. Logged in (Telegram session): the name and "Log out". With a /dashboard link token:
+ * "Private view", an offer to stay logged in (turns the link into a session) and "Public view".
+ * Public: "Log in" and the admin-token field. Also picks up a personal link's #token=... on first load.
  */
 export function ViewerControl() {
   const [me, setMe] = useState<Me | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [convertError, setConvertError] = useState<string | null>(null);
   const authKey = useAuthKey();
   useEffect(() => {
     captureTokenFromUrl();
@@ -149,16 +172,68 @@ export function ViewerControl() {
   useEffect(() => {
     fetchMe().then(setMe, () => setMe(null));
   }, [authKey]);
-  if (!me) return <AdminTokenField />;
+  if (!me)
+    return (
+      <div className="flex flex-wrap items-center justify-end gap-2 sm:gap-3">
+        <AdminTokenField />
+        <LoginButton />
+      </div>
+    );
+  if (me.via === "session")
+    return (
+      <div className="flex flex-wrap items-center justify-end gap-2 text-xs">
+        <span className={pillCls} data-testid="viewer-name">
+          <UserRound className="h-3 w-3" aria-hidden="true" />
+          {me.display_name}
+          {me.role === "owner" && <span className="text-emerald-300/70">· owner</span>}
+        </span>
+        <button
+          type="button"
+          className={ghostCls}
+          disabled={busy}
+          onClick={async () => {
+            setBusy(true);
+            await logout();
+            setBusy(false);
+          }}
+        >
+          <LogOut className="h-3 w-3" aria-hidden="true" />
+          Log out
+        </button>
+      </div>
+    );
   return (
-    <div className="flex items-center gap-2 text-xs">
-      <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 text-emerald-300">
+    <div className="flex flex-wrap items-center justify-end gap-2 text-xs">
+      <span className={pillCls}>
         <Lock className="h-3 w-3" aria-hidden="true" />
         Private view: {me.display_name}
       </span>
+      {me.via === "token" && (
+        <button
+          type="button"
+          className={ghostCls}
+          disabled={busy}
+          title="Start a login session from this link, so the link isn't kept in this browser"
+          onClick={async () => {
+            setBusy(true);
+            setConvertError(null);
+            try {
+              await convertTokenToSession();
+            } catch (e) {
+              setConvertError(e instanceof Error ? e.message : "Failed");
+            } finally {
+              setBusy(false);
+            }
+          }}
+        >
+          <LogIn className="h-3 w-3" aria-hidden="true" />
+          Stay logged in
+        </button>
+      )}
+      {convertError && <span className="text-red-400">{convertError}</span>}
       <button
         type="button"
-        className="inline-flex items-center gap-1 rounded-md border border-border/50 px-2 py-1 text-muted-foreground hover:text-foreground"
+        className={ghostCls}
         onClick={() => {
           setAdminToken("");
           setUserToken("");

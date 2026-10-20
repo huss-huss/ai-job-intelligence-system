@@ -1,6 +1,17 @@
 // For production: use full URL, for dev: use empty string (rewrites handle it)
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || (typeof window !== "undefined" ? window.location.origin.replace(/:\d+$/, ":8000") : "");
 
+/**
+ * Every request sends the login cookie (ff_session, HttpOnly, set by the API). In production /api/* is
+ * proxied by the dashboard's own domain, so this is same-origin; in development it's the API on :8000.
+ */
+function apiFetch(path: string, init: RequestInit = {}): Promise<Response> {
+  return fetch(`${API_BASE}${path}`, { credentials: "include", ...init });
+}
+
+/** Cookie-authenticated writes must carry it (CSRF; see backend/app/auth.py). */
+export const CSRF_HEADERS = { "X-Requested-With": "firstfetch" };
+
 export type Job = {
   id: number;
   source_id: number;
@@ -111,7 +122,7 @@ export type JobsResponse = {
 };
 
 export async function fetchHealth(): Promise<{ status: string }> {
-  const res = await fetch(`${API_BASE}/api/health`);
+  const res = await apiFetch(`/api/health`);
   if (!res.ok) throw new Error("Health check failed");
   return res.json();
 }
@@ -135,19 +146,19 @@ export async function fetchJobs(params: {
   if (params.eligible) sp.set("eligible", params.eligible);
   if (params.status) sp.set("status", params.status);
   if (params.sort) sp.set("sort", params.sort);
-  const res = await fetch(`${API_BASE}/api/jobs?${sp}`, { headers: authHeaders() });
+  const res = await apiFetch(`/api/jobs?${sp}`, { headers: authHeaders() });
   if (!res.ok) throw new Error("Failed to fetch jobs");
   return res.json();
 }
 
 export async function fetchJob(id: number): Promise<Job> {
-  const res = await fetch(`${API_BASE}/api/jobs/${id}`);
+  const res = await apiFetch(`/api/jobs/${id}`, { headers: authHeaders() });
   if (!res.ok) throw new Error("Job not found");
   return res.json();
 }
 
 export async function fetchSources(): Promise<Source[]> {
-  const res = await fetch(`${API_BASE}/api/sources`);
+  const res = await apiFetch(`/api/sources`);
   if (!res.ok) throw new Error("Failed to fetch sources");
   return res.json();
 }
@@ -156,13 +167,13 @@ export async function fetchRuns(params?: { type?: string; limit?: number }): Pro
   const sp = new URLSearchParams();
   if (params?.type) sp.set("type", params.type);
   if (params?.limit != null) sp.set("limit", String(params.limit));
-  const res = await fetch(`${API_BASE}/api/runs?${sp}`);
+  const res = await apiFetch(`/api/runs?${sp}`, { headers: authHeaders() });
   if (!res.ok) throw new Error("Failed to fetch runs");
   return res.json();
 }
 
 export async function triggerScrape(sourceId?: number): Promise<{ job_id?: string; jobs?: { source_id: number; job_id: string }[]; message: string }> {
-  const res = await fetch(`${API_BASE}/api/scrape`, {
+  const res = await apiFetch(`/api/scrape`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(sourceId != null ? { source_id: sourceId } : {}),
@@ -172,7 +183,7 @@ export async function triggerScrape(sourceId?: number): Promise<{ job_id?: strin
 }
 
 export async function triggerAnalyze(jobIds?: number[]): Promise<{ job_id: string; message: string; job_count: number }> {
-  const res = await fetch(`${API_BASE}/api/analyze`, {
+  const res = await apiFetch(`/api/analyze`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(jobIds != null ? { job_ids: jobIds } : {}),
@@ -186,7 +197,7 @@ export async function triggerAnalyze(jobIds?: number[]): Promise<{ job_id: strin
 }
 
 export async function createTestJobs(): Promise<{ message: string; inserted: number; skipped: number; total: number }> {
-  const res = await fetch(`${API_BASE}/api/jobs/test`, {
+  const res = await apiFetch(`/api/jobs/test`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
   });
@@ -202,7 +213,7 @@ export async function createTestJobs(): Promise<{ message: string; inserted: num
 }
 
 export async function clearRuns(): Promise<{ message: string; deleted: number }> {
-  const res = await fetch(`${API_BASE}/api/runs`, {
+  const res = await apiFetch(`/api/runs`, {
     method: "DELETE",
     headers: { "Content-Type": "application/json" },
   });
@@ -218,7 +229,7 @@ export async function clearRuns(): Promise<{ message: string; deleted: number }>
 }
 
 export async function clearJobs(): Promise<{ message: string; deleted_jobs: number; deleted_analyses: number }> {
-  const res = await fetch(`${API_BASE}/api/jobs`, {
+  const res = await apiFetch(`/api/jobs`, {
     method: "DELETE",
     headers: { "Content-Type": "application/json" },
   });
@@ -314,29 +325,96 @@ export function authHeaders(): Record<string, string> {
   return user ? { "X-User-Token": user } : {};
 }
 
-export type Me = { role: "owner" | "member"; display_name: string };
+/** How the viewer is known: a login session (cookie), a /dashboard link token, or the admin token. */
+export type Me = { role: "owner" | "member"; display_name: string; via: "session" | "token" | "admin" };
 
-/** Whose private view this is, or null for the public view. */
-export async function fetchMe(): Promise<Me | null> {
-  if (!hasViewerToken()) return null;
-  const res = await fetch(`${API_BASE}/api/me`, { headers: authHeaders() });
-  if (!res.ok) return null;
-  return res.json();
+let meCache: Promise<Me | null> | null = null;
+if (typeof window !== "undefined") {
+  window.addEventListener(AUTH_EVENT, () => (meCache = null));
+  window.addEventListener("storage", () => (meCache = null));
+}
+
+/**
+ * Whose private view this is, or null for the public view. GET /api/auth/session answers 200 either
+ * way (no 401 noise for the public), and the answer is shared by every panel until the login changes.
+ */
+export function fetchMe(): Promise<Me | null> {
+  if (!meCache) {
+    meCache = apiFetch(`/api/auth/session`, { headers: authHeaders(), cache: "no-store" })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => (data?.authenticated ? ({ role: data.role, display_name: data.display_name, via: data.via } as Me) : null))
+      .catch(() => null);
+  }
+  return meCache;
 }
 
 export function hasViewerToken(): boolean {
   return Object.keys(authHeaders()).length > 0;
 }
 
+/** The user object the Telegram Login Widget passes to data-onauth (id, names, auth_date, hash...). */
+export type TelegramUser = Record<string, string | number>;
+
+export class LoginError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message);
+  }
+}
+
+async function authPost(path: string, init: RequestInit = {}): Promise<Response> {
+  return apiFetch(path, {
+    method: "POST",
+    cache: "no-store",
+    ...init,
+    headers: { "Content-Type": "application/json", ...CSRF_HEADERS, ...(init.headers ?? {}) },
+  });
+}
+
+/** Sends the widget's signed payload; on success the API sets the ff_session cookie. */
+export async function loginWithTelegram(user: TelegramUser): Promise<Me> {
+  const res = await authPost(`/api/auth/telegram`, { body: JSON.stringify(user) });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const fallback =
+      res.status === 403
+        ? "This Telegram account isn't invited. Ask the owner for an invite, then join from the bot."
+        : res.status === 401
+          ? "That login expired or couldn't be verified. Please try again."
+          : "Login isn't available right now.";
+    throw new LoginError(res.status === 403 || res.status === 401 ? fallback : (typeof data?.detail === "string" ? data.detail : fallback), res.status);
+  }
+  // A session replaces any token kept in this browser.
+  window.localStorage.removeItem(USER_TOKEN_KEY);
+  window.dispatchEvent(new Event(AUTH_EVENT));
+  return { role: data.role, display_name: data.display_name, via: "session" };
+}
+
+/** Turns the /dashboard link's token into a login session, then forgets the token in this browser. */
+export async function convertTokenToSession(): Promise<void> {
+  const token = getUserToken();
+  if (!token) return;
+  const res = await authPost(`/api/auth/token-session`, { headers: { "X-User-Token": token } });
+  if (!res.ok) throw new Error("Couldn't start a session from this link");
+  setUserToken("");
+}
+
+/** Ends the login session (if any) and forgets every token kept in this browser. */
+export async function logout(): Promise<void> {
+  await authPost(`/api/auth/logout`).catch(() => null);
+  window.localStorage.removeItem(ADMIN_TOKEN_KEY);
+  window.localStorage.removeItem(USER_TOKEN_KEY);
+  window.dispatchEvent(new Event(AUTH_EVENT));
+}
+
 async function writeJson<T>(path: string, body: unknown): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, {
+  const res = await apiFetch(path, {
     method: "PATCH",
-    headers: { "Content-Type": "application/json", ...authHeaders() },
+    headers: { "Content-Type": "application/json", ...CSRF_HEADERS, ...authHeaders() },
     body: JSON.stringify(body),
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    if (res.status === 401 || res.status === 403) throw new Error("Read-only: enter your token to make changes");
+    if (res.status === 401 || res.status === 403) throw new Error("Read-only: log in to make changes");
     throw new Error(typeof data?.detail === "string" ? data.detail : `Request failed (${res.status})`);
   }
   return data as T;
@@ -346,7 +424,7 @@ async function writeJson<T>(path: string, body: unknown): Promise<T> {
 export async function fetchApplications(status?: string): Promise<Application[] | null> {
   const sp = new URLSearchParams();
   if (status) sp.set("status", status);
-  const res = await fetch(`${API_BASE}/api/applications?${sp}`, { headers: authHeaders() });
+  const res = await apiFetch(`/api/applications?${sp}`, { headers: authHeaders() });
   if (res.status === 401 || res.status === 403) return null;
   if (!res.ok) throw new Error("Failed to fetch applications");
   return res.json();
@@ -357,7 +435,7 @@ export function updateApplication(jobId: number, body: { status?: ApplicationSta
 }
 
 export async function fetchTalentNetworks(): Promise<TalentNetwork[]> {
-  const res = await fetch(`${API_BASE}/api/talent-networks`, { headers: authHeaders() });
+  const res = await apiFetch(`/api/talent-networks`, { headers: authHeaders() });
   if (!res.ok) throw new Error("Failed to fetch talent networks");
   return res.json();
 }
