@@ -281,8 +281,8 @@ export default function DashboardPage() {
         </div>
       </header>
 
-      <main className="container mx-auto grid gap-6 px-4 py-8 lg:grid-cols-3">
-        <div className="lg:col-span-2 space-y-6">
+      <main className="container mx-auto grid grid-cols-1 gap-6 px-4 py-8 lg:grid-cols-3">
+        <div className="min-w-0 lg:col-span-2 space-y-6">
           <Card className="border-border/50 shadow-lg shadow-primary/5 animate-fade-in">
             <CardHeader className="pb-4">
               <div className="flex items-center justify-between">
@@ -379,7 +379,7 @@ export default function DashboardPage() {
           />
         </div>
 
-        <div className="space-y-6">
+        <div className="min-w-0 space-y-6">
           <Card className="border-border/50 shadow-lg shadow-primary/5 animate-fade-in">
             <CardHeader className="pb-4">
               <CardTitle className="text-lg font-semibold flex items-center gap-2">
