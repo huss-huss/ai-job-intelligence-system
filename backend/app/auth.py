@@ -1,14 +1,16 @@
-"""Who is asking: the read side of the privacy lock.
+"""Who is asking: the privacy lock.
 
-Job data and the public (owner-profile) score are open to everyone, for the portfolio demo.
-Everything a person *did* with a job (tracker statuses, notes, feedback, talent-network progress)
-is private: it is only returned to a caller that proves who they are.
+The whole dashboard is private. Every data endpoint (jobs, scores, sources, runs, talent networks,
+the tracker) needs an authenticated caller (``require_viewer``: 401 otherwise, with no data or counts);
+the few public routes are listed in ``main.PUBLIC_PATHS``. Within that, each user only ever sees their
+own statuses, notes, feedback, talent-network progress and scores.
 
 * ``X-Admin-Token: <ADMIN_TOKEN>`` is the owner.
 * ``X-User-Token: <token>`` is the user whose personal dashboard link (/dashboard in the bot) it
   is. Only its SHA-256 is stored; it opens that user's own tracker and nothing else.
 * The ``ff_session`` cookie is a "Log in with Telegram" session (app/web_sessions.py): the same
-  rights as that user's X-User-Token. Headers win over the cookie when both are sent.
+  rights as that user's X-User-Token, plus admin operations for the owner's session (below). Headers
+  win over the cookie when both are sent.
 
 CSRF: a cookie is sent by the browser on its own, so every cookie-authenticated request other than
 GET/HEAD/OPTIONS must also carry ``X-Requested-With: firstfetch``. A page on another origin can't add a
@@ -16,8 +18,12 @@ custom header without a CORS preflight, which only the dashboard's origins pass 
 form can't add one at all. SameSite=Lax on the cookie is the second layer. The header tokens need no such
 check: a browser never attaches them by itself.
 
-Tokens are compared in constant time. With no ADMIN_TOKEN configured nobody can read private
-data over HTTP (fail closed); the Telegram bot still works, it has its own secret.
+Admin operations (scrapes, analysis, sources, deleting jobs or runs) need ``require_owner``: the
+``X-Admin-Token``, or the owner's own login session (cookie plus the CSRF header). A member, or the
+owner's /dashboard link token, gets 403.
+
+Tokens are compared in constant time. With no ADMIN_TOKEN configured only login sessions and dashboard
+links work over HTTP (fail closed); the Telegram bot still works, it has its own secret.
 """
 
 from __future__ import annotations
@@ -34,6 +40,7 @@ from app.db_sync import get_sync_db
 ADMIN_HEADER = "x-admin-token"
 USER_HEADER = "x-user-token"
 SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+CSRF_MISSING = "Cookie-authenticated writes need the X-Requested-With: firstfetch header"
 
 
 @dataclass(frozen=True)
@@ -99,7 +106,7 @@ def viewer_from_request(request: Request, session: Session, response: Response |
     cookie = request.cookies.get(web_sessions.COOKIE_NAME)
     if cookie:
         if not csrf_ok(request):
-            raise HTTPException(403, "Cookie-authenticated writes need the X-Requested-With: firstfetch header")
+            raise HTTPException(403, CSRF_MISSING)
         resolved = web_sessions.resolve_session(session, cookie)
         if resolved is None:
             session.commit()  # an expired row is deleted even though the request then fails
@@ -135,4 +142,19 @@ def require_viewer(viewer: Viewer | None = Depends(optional_viewer)) -> Viewer:
             "Private data: log in, or send X-Admin-Token or your X-User-Token",
             headers={"WWW-Authenticate": "Token"},
         )
+    return viewer
+
+
+OWNER_VIA = frozenset({"admin", "session"})
+
+
+def require_owner(viewer: Viewer = Depends(require_viewer)) -> Viewer:
+    """FastAPI dependency for admin operations: the admin token, or the owner's login session.
+
+    A cookie-authenticated write has already passed the CSRF check in ``viewer_from_request``. The owner's
+    /dashboard link token is not enough: that link lives in a URL and in localStorage, so it stays a
+    tracker-only credential like every member's.
+    """
+    if not viewer.is_owner or viewer.via not in OWNER_VIA:
+        raise HTTPException(403, "Only the owner can do this: log in as the owner, or send X-Admin-Token")
     return viewer

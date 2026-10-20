@@ -6,7 +6,8 @@
   so the link doesn't need to stay in this browser's storage.
 * ``POST /api/auth/logout``: ends the cookie's session and clears the cookie.
 * ``GET /api/auth/session``: who is looking (any of the three ways to authenticate), or
-  ``{"authenticated": false}`` for the public: no 401, so the public page stays quiet.
+  ``{"authenticated": false}`` for the public: no 401, so the dashboard can send a logged-out visitor
+  to /login quietly. Every route here is in main.PUBLIC_PATHS.
 
 Every POST here needs ``X-Requested-With: firstfetch`` (CSRF, see app/auth.py): a page elsewhere can't
 log a visitor in to someone else's account or out of theirs.

@@ -1,18 +1,19 @@
-"""Sources CRUD and scrape trigger."""
+"""Sources CRUD and scrape trigger. Reading needs a logged-in viewer; changes need the owner."""
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth import require_owner, require_viewer
 from app.database import get_db
 from app.models import Source
-from app.schemas import SourceCreate, SourceOut, SourceUpdate
 from app.queue import dispatch_scrape
+from app.schemas import SourceCreate, SourceOut, SourceUpdate
 
 router = APIRouter(prefix="/api/sources", tags=["sources"])
 
 
-@router.get("", response_model=list[SourceOut])
+@router.get("", response_model=list[SourceOut], dependencies=[Depends(require_viewer)])
 async def list_sources(db: AsyncSession = Depends(get_db)) -> list[SourceOut]:
     """List all configured sources."""
     result = await db.execute(select(Source).order_by(Source.id))
@@ -20,7 +21,7 @@ async def list_sources(db: AsyncSession = Depends(get_db)) -> list[SourceOut]:
     return [SourceOut.model_validate(s) for s in sources]
 
 
-@router.post("", response_model=SourceOut, status_code=201)
+@router.post("", response_model=SourceOut, status_code=201, dependencies=[Depends(require_owner)])
 async def create_source(body: SourceCreate, db: AsyncSession = Depends(get_db)) -> SourceOut:
     """Create a new job source."""
     source = Source(
@@ -35,7 +36,7 @@ async def create_source(body: SourceCreate, db: AsyncSession = Depends(get_db)) 
     return SourceOut.model_validate(source)
 
 
-@router.get("/{source_id}", response_model=SourceOut)
+@router.get("/{source_id}", response_model=SourceOut, dependencies=[Depends(require_viewer)])
 async def get_source(source_id: int, db: AsyncSession = Depends(get_db)) -> SourceOut:
     """Get a source by id."""
     result = await db.execute(select(Source).where(Source.id == source_id))
@@ -45,7 +46,7 @@ async def get_source(source_id: int, db: AsyncSession = Depends(get_db)) -> Sour
     return SourceOut.model_validate(source)
 
 
-@router.patch("/{source_id}", response_model=SourceOut)
+@router.patch("/{source_id}", response_model=SourceOut, dependencies=[Depends(require_owner)])
 async def update_source(
     source_id: int, body: SourceUpdate, db: AsyncSession = Depends(get_db)
 ) -> SourceOut:
@@ -67,7 +68,7 @@ async def update_source(
     return SourceOut.model_validate(source)
 
 
-@router.post("/{source_id}/scrape")
+@router.post("/{source_id}/scrape", dependencies=[Depends(require_owner)])
 async def trigger_scrape(source_id: int, db: AsyncSession = Depends(get_db)) -> dict:
     """Enqueue a scrape task for this source. Returns queue job id."""
     result = await db.execute(select(Source).where(Source.id == source_id))

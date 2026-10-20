@@ -1,7 +1,7 @@
-"""Jobs list and detail with filtering and pagination.
+"""Jobs list and detail with filtering and pagination. Private: every route needs a logged-in viewer
+(login session, X-User-Token or X-Admin-Token); the public gets 401 and no data or counts.
 
-Without a token every score is the public one (jobs_analysis, from the deployment profile). With a
-token (X-User-Token or X-Admin-Token) the score fields are the viewer's own (user_job_scores): the
+The score fields are the viewer's own (user_job_scores): the
 response has the same shape, with `analysis.score`, `analysis.skills` and `extracted_json.match`,
 `.hire`, `.hire_probability` and `.rank` replaced, and `extracted_json.score_scope` set to "user".
 A job the viewer has no score row for yet (stored before they joined and older than the 30-day
@@ -14,7 +14,7 @@ from sqlalchemy import ColumnElement, and_, delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.auth import Viewer, optional_viewer
+from app.auth import Viewer, require_owner, require_viewer
 from app.database import get_db
 from app.models import Application, JobAnalysis, JobRaw, UserJobScore
 from app.routes.applications import parse_statuses
@@ -90,13 +90,11 @@ def _join_user_scores(stmt, user_id: int):
     return stmt.outerjoin(UserJobScore, and_(UserJobScore.job_id == JobRaw.id, UserJobScore.user_id == user_id))
 
 
-def _analysis_out(job: JobRaw, mine: UserJobScore | None, viewer: Viewer | None) -> JobAnalysisOut | None:
-    """The public analysis, or for a viewer the same shape carrying their own score."""
+def _analysis_out(job: JobRaw, mine: UserJobScore | None) -> JobAnalysisOut | None:
+    """The analysis in the stored shape, carrying the viewer's own score (or the public one, marked)."""
     if job.analysis is None:
         return None
     out = JobAnalysisOut.model_validate(job.analysis)
-    if viewer is None:
-        return out
     extracted = dict(out.extracted_json or {})
     if mine is None:
         out.extracted_json = {**extracted, "score_scope": "public"}
@@ -113,7 +111,7 @@ def _analysis_out(job: JobRaw, mine: UserJobScore | None, viewer: Viewer | None)
     return out
 
 
-def _job_out(job: JobRaw, mine: UserJobScore | None = None, viewer: Viewer | None = None) -> JobOut:
+def _job_out(job: JobRaw, mine: UserJobScore | None) -> JobOut:
     return JobOut(
         id=job.id,
         source_id=job.source_id,
@@ -125,7 +123,7 @@ def _job_out(job: JobRaw, mine: UserJobScore | None = None, viewer: Viewer | Non
         posted_at=job.posted_at,
         content_hash=job.content_hash,
         created_at=job.created_at,
-        analysis=_analysis_out(job, mine, viewer),
+        analysis=_analysis_out(job, mine),
     )
 
 
@@ -151,25 +149,19 @@ async def list_jobs(
     status: str | None = Query(
         None,
         description="Tracker status: comma-separated subset of new, saved, applied, interviewing, offer, "
-        "rejected, not_interested ('new' includes untracked jobs). Private: needs a token",
+        "rejected, not_interested ('new' includes untracked jobs); the viewer's own statuses",
     ),
-    viewer: Viewer | None = Depends(optional_viewer),
+    viewer: Viewer = Depends(require_viewer),
 ) -> Paginated[JobOut]:
     """List jobs with optional filters and pagination. Never includes tracker data.
 
-    With a token the scores, sorting and score/eligibility filters are the viewer's own (module docstring).
+    The scores, sorting and score/eligibility filters are the viewer's own (module docstring).
     """
     statuses = parse_statuses(status)
-    if statuses is not None and viewer is None:
-        # Filtering by status would reveal which jobs someone applied to.
-        raise HTTPException(status_code=401, detail="The status filter is private: send a token")
     wanted = parse_eligible(eligible)
-    personal = viewer is not None
-    base = select(JobRaw).options(selectinload(JobRaw.analysis))
-    count_stmt = select(func.count()).select_from(JobRaw)
-    if personal:
-        base = _join_user_scores(base.add_columns(UserJobScore), viewer.user_id)
-        count_stmt = _join_user_scores(count_stmt, viewer.user_id)
+    base = select(JobRaw).options(selectinload(JobRaw.analysis)).add_columns(UserJobScore)
+    base = _join_user_scores(base, viewer.user_id)
+    count_stmt = _join_user_scores(select(func.count()).select_from(JobRaw), viewer.user_id)
     if source is not None:
         base = base.where(JobRaw.source_id == source)
         count_stmt = count_stmt.where(JobRaw.source_id == source)
@@ -185,16 +177,15 @@ async def list_jobs(
     # Subquery for min_score: only job_ids that have analysis with score >= min_score
     if min_score is not None:
         subq = select(JobAnalysis.job_id).where(JobAnalysis.score >= min_score)
-        condition = JobRaw.id.in_(subq)
-        if personal:  # the viewer's fit is stored 0-100
-            condition = or_(
-                UserJobScore.score >= min_score * 100, and_(UserJobScore.job_id.is_(None), condition)
-            )
+        # The viewer's fit is stored 0-100; jobs without a row for them use the public score.
+        condition = or_(
+            UserJobScore.score >= min_score * 100, and_(UserJobScore.job_id.is_(None), JobRaw.id.in_(subq))
+        )
         base = base.where(condition)
         count_stmt = count_stmt.where(condition)
 
     if wanted is not None:
-        condition = user_eligibility_filter(wanted) if personal else eligibility_filter(wanted)
+        condition = user_eligibility_filter(wanted)
         base = base.where(condition)
         count_stmt = count_stmt.where(condition)
 
@@ -205,8 +196,8 @@ async def list_jobs(
 
     total = (await db.execute(count_stmt)).scalar() or 0
     # The viewer's own values first; jobs without a row for them follow, by the public values.
-    mine_rank = (UserJobScore.rank.desc().nulls_last(), UserJobScore.score.desc().nulls_last()) if personal else ()
-    mine_score = (UserJobScore.score.desc().nulls_last(),) if personal else ()
+    mine_rank = (UserJobScore.rank.desc().nulls_last(), UserJobScore.score.desc().nulls_last())
+    mine_score = (UserJobScore.score.desc().nulls_last(),)
     if sort == "rank":
         # Rows analyzed before hire probability existed have no rank; they sort last until re-analyzed.
         base = base.outerjoin(JobAnalysis, JobAnalysis.job_id == JobRaw.id).order_by(
@@ -223,10 +214,7 @@ async def list_jobs(
         base = base.order_by(JobRaw.created_at.desc())
     base = base.offset((page - 1) * page_size).limit(page_size)
     result = await db.execute(base)
-    if personal:
-        items = [_job_out(job, mine, viewer) for job, mine in result.all()]
-    else:
-        items = [_job_out(job) for job in result.scalars().all()]
+    items = [_job_out(job, mine) for job, mine in result.all()]
 
     pages = (total + page_size - 1) // page_size if total else 0
     return Paginated(items=items, total=total, page=page, page_size=page_size, pages=pages)
@@ -234,26 +222,24 @@ async def list_jobs(
 
 @router.get("/{job_id}", response_model=JobOut)
 async def get_job(
-    job_id: int, db: AsyncSession = Depends(get_db), viewer: Viewer | None = Depends(optional_viewer)
+    job_id: int, db: AsyncSession = Depends(get_db), viewer: Viewer = Depends(require_viewer)
 ) -> JobOut:
-    """Get a single job by id; with a token, scored for the viewer like the list."""
+    """Get a single job by id, scored for the viewer like the list."""
     result = await db.execute(
         select(JobRaw).options(selectinload(JobRaw.analysis)).where(JobRaw.id == job_id)
     )
     job = result.scalar_one_or_none()
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
-    mine = None
-    if viewer is not None:
-        mine = (
-            await db.execute(
-                select(UserJobScore).where(UserJobScore.user_id == viewer.user_id, UserJobScore.job_id == job_id)
-            )
-        ).scalar_one_or_none()
-    return _job_out(job, mine, viewer)
+    mine = (
+        await db.execute(
+            select(UserJobScore).where(UserJobScore.user_id == viewer.user_id, UserJobScore.job_id == job_id)
+        )
+    ).scalar_one_or_none()
+    return _job_out(job, mine)
 
 
-@router.delete("")
+@router.delete("", dependencies=[Depends(require_owner)])
 async def clear_jobs(db: AsyncSession = Depends(get_db)) -> dict:
     """Delete all jobs (raw + analysis) for cleanup/testing."""
     # Delete analyses first (due to foreign key)

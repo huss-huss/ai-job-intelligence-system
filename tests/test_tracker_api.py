@@ -85,8 +85,8 @@ def test_tracker_reads_and_writes_need_the_admin_token(client, session, monkeypa
     job = add_job(session)
     assert client.get("/api/applications").status_code == 401
     assert client.get("/api/applications", headers={"X-Admin-Token": "wrong"}).status_code == 401
-    assert client.patch(f"/api/applications/{job.id}", json={"status": "saved"}).status_code == 403
-    assert client.patch("/api/talent-networks/andela", json={"status": "applied"}).status_code == 403
+    assert client.patch(f"/api/applications/{job.id}", json={"status": "saved"}).status_code == 401
+    assert client.patch("/api/talent-networks/andela", json={"status": "applied"}).status_code == 401
     assert client.patch(f"/api/applications/{job.id}", json={"status": "saved"}, headers=ADMIN).status_code == 200
     assert client.patch("/api/talent-networks/andela", json={"status": "applied"}, headers=ADMIN).status_code == 200
     assert client.get("/api/applications", headers=ADMIN).status_code == 200
@@ -97,7 +97,7 @@ def test_without_an_admin_token_configured_private_data_is_closed(client, sessio
     monkeypatch.setattr(app_settings, "admin_token", "")
     assert client.get("/api/applications").status_code == 401
     assert client.get("/api/applications", headers={"X-Admin-Token": ""}).status_code == 401
-    # Writes are open without ADMIN_TOKEN (local dev), but tracker writes still need a caller.
+    # Without ADMIN_TOKEN nothing is open: every write needs a caller too.
     assert client.patch(f"/api/applications/{job.id}", json={"status": "saved"}).status_code == 401
     assert client.patch("/api/talent-networks/andela", json={"status": "applied"}).status_code == 401
 
@@ -149,14 +149,14 @@ def test_webhook_with_secret_handles_commands_even_when_read_only(client, fake_t
     resp = client.post(HOOK, json=message_update("/help"), headers={"X-Telegram-Bot-Api-Secret-Token": SECRET})
     assert resp.status_code == 200 and resp.json() == {"ok": True, "result": "command:help"}
     assert fake_tg.sent()[0]["chat_id"] == OWNER
-    # A wrong secret doesn't get past the read-only lock either.
+    # A wrong secret is refused by the webhook itself (the path needs no login, only its secret).
     bad = client.post(HOOK, json=message_update("/help"), headers={"X-Telegram-Bot-Api-Secret-Token": "x"})
-    assert bad.status_code == 403
-    # The exemption is for the webhook path only.
+    assert bad.status_code == 401 and len(fake_tg.sent()) == 1
+    # The secret only opens the webhook path; anywhere else it's no credential at all.
     other = client.patch(
         "/api/talent-networks/arc", json={"status": "applied"}, headers={"X-Telegram-Bot-Api-Secret-Token": SECRET}
     )
-    assert other.status_code == 403
+    assert other.status_code == 401
 
 
 def test_webhook_button_tap_updates_tracker(client, session, fake_tg):
@@ -244,6 +244,8 @@ def test_jobs_endpoint_applies_status_filter(engine):
             resp = c.get("/api/jobs", params={"status": "new,saved,applied"}, headers=ADMIN)
         assert resp.status_code == 200 and rec.statements
         assert all("applications.user_id = 1 AND applications.status IN" in _sql(s) for s in rec.statements)
-        assert c.get("/api/jobs", params={"status": "bogus"}).status_code == 422
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(app_settings, "admin_token", "adm")
+            assert c.get("/api/jobs", params={"status": "bogus"}, headers=ADMIN).status_code == 422
     finally:
         main.app.dependency_overrides.clear()

@@ -1,8 +1,8 @@
 """Telegram webhook: POST /api/telegram/webhook.
 
 Telegram sends the secret given to setWebhook in X-Telegram-Bot-Api-Secret-Token. That header,
-compared in constant time, is the only way in; with a valid secret the request is also exempt
-from the ADMIN_TOKEN write lock (see main.py). Errors are logged and answered with 200, because
+compared in constant time, is the only way in (the path is in main.PUBLIC_PATHS:
+no login). Errors are logged and answered with 200, because
 Telegram would otherwise redeliver the same update again and again.
 """
 

@@ -32,9 +32,13 @@ class Settings(BaseSettings):
     # Vercel Cron sends "Authorization: Bearer <CRON_SECRET>"
     cron_secret: str = ""
 
-    # When set, POST/PATCH/DELETE require "X-Admin-Token: <ADMIN_TOKEN>" (read-only public demo).
-    # The cron endpoint has its own CRON_SECRET check.
+    # The owner's API key: "X-Admin-Token: <ADMIN_TOKEN>" reads everything and runs admin operations
+    # (the owner's login session can do the same from the dashboard). The cron endpoint has its own
+    # CRON_SECRET check.
     admin_token: str = ""
+
+    # Interactive API docs (/api/docs, /api/redoc, /api/openapi.json). Unset: on locally, off on Vercel.
+    api_docs: bool | None = None
 
     # Comma-separated extra origins allowed by CORS (dev origins are always allowed)
     cors_origins: str = ""

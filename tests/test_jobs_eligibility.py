@@ -4,8 +4,9 @@ import os
 
 import main
 import pytest
+from app.auth import Viewer, require_viewer
 from app.database import get_db
-from app.models import JobAnalysis, JobRaw
+from app.models import JobAnalysis, JobRaw, User, UserJobScore
 from app.routes.jobs import eligibility_filter, parse_eligible
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
@@ -81,8 +82,10 @@ def recording_client():
     async def fake_db():
         yield session
 
+    # The list is private: a fixed viewer here (the token itself is tested in test_private_site.py).
     main.app.dependency_overrides[get_db] = fake_db
-    yield TestClient(main.app), session
+    main.app.dependency_overrides[require_viewer] = lambda: Viewer(role="owner", user_id=1)
+    yield TestClient(main.app, headers={"X-User-Token": "viewer"}), session
     main.app.dependency_overrides.clear()
 
 
@@ -90,7 +93,8 @@ def test_default_request_is_unfiltered(recording_client):
     client, session = recording_client
     resp = client.get("/api/jobs")
     assert resp.status_code == 200 and resp.json()["total"] == 0
-    assert all("eligible" not in _sql(s) for s in session.statements)
+    for sql in map(_sql, session.statements):  # the viewer's score row is selected, but nothing filters on it
+        assert "{match, eligible}" not in sql and "user_job_scores.eligible IS" not in sql
 
 
 def test_eligible_param_filters_both_count_and_page(recording_client):
@@ -121,7 +125,7 @@ def test_eligible_filter_against_postgres():
     from sqlalchemy.pool import NullPool
 
     sync_engine = create_engine(sync_database_url(TEST_DATABASE_URL))
-    tables = [Source.__table__, JobRaw.__table__, JobAnalysis.__table__]
+    tables = [Source.__table__, JobRaw.__table__, JobAnalysis.__table__, User.__table__, UserJobScore.__table__]
     Base.metadata.drop_all(sync_engine, tables=tables)
     Base.metadata.create_all(sync_engine, tables=tables)
     with Session(sync_engine) as s:
@@ -148,8 +152,10 @@ def test_eligible_filter_against_postgres():
             yield session
 
     main.app.dependency_overrides[get_db] = real_db
+    # A viewer with no score rows: every job falls back to the public flag and score.
+    main.app.dependency_overrides[require_viewer] = lambda: Viewer(role="owner", user_id=1)
     try:
-        client = TestClient(main.app)
+        client = TestClient(main.app, headers={"X-User-Token": "viewer"})
 
         def titles(eligible=None):
             params = {"eligible": eligible} if eligible else {}

@@ -1,5 +1,6 @@
 """Log in with Telegram: the widget signature (known vectors made here), who may log in, the session
-lifecycle and cookie, CSRF on cookie writes, isolation between users and the ADMIN_TOKEN write lock.
+lifecycle and cookie, CSRF on cookie writes and isolation between users (admin operations by session:
+test_private_site.py).
 No network: the payloads are signed in the test with a fake bot token."""
 
 import hashlib
@@ -244,7 +245,7 @@ def test_cookie_writes_need_the_csrf_header(api, session, two, monkeypatch):
     assert api.patch("/api/talent-networks/arc", json={"status": "vetted"}).status_code == 403
     session.expire_all()
     assert tracker.get_application(session, member.id, jobs[0].id) is None
-    # Without ADMIN_TOKEN the middleware lets everything through; the dependency still refuses.
+    # Without ADMIN_TOKEN too: the lock no longer depends on it.
     monkeypatch.setattr(app_settings, "admin_token", "")
     resp = api.patch(url, json={"status": "applied"})
     assert resp.status_code == 403 and "X-Requested-With" in resp.json()["detail"]
@@ -294,25 +295,6 @@ def test_headers_win_over_the_cookie(api, session, two):
     assert api.get("/api/me", headers={"X-Admin-Token": "wrong"}).status_code == 401
     assert api.get("/api/me", headers={"X-Admin-Token": "adm"}).json()["role"] == "owner"
     assert api.get("/api/me").json()["display_name"] == "Alem"
-
-
-def test_owner_session_is_not_the_admin_token(api, session, two):
-    me, _, _, jobs = two
-    login(api, OWNER)
-    assert api.patch(f"/api/applications/{jobs[0].id}", json={"status": "saved"}, headers=CSRF).status_code == 200
-    assert api.patch("/api/talent-networks/turing", json={"status": "vetted"}, headers=CSRF).status_code == 200
-    for method, url, body in (
-        ("post", "/api/analyze", {}),
-        ("post", "/api/scrape", {}),
-        ("delete", "/api/jobs", None),
-        ("delete", "/api/runs", None),
-        ("patch", "/api/sources/1", {"enabled": False}),
-        ("post", "/api/jobs/test", None),
-    ):
-        resp = api.request(method.upper(), url, json=body, headers=CSRF)
-        assert resp.status_code == 403 and resp.json() == {"detail": "This demo is read-only"}, url
-    session.expire_all()
-    assert {n["slug"]: n["status"] for n in talent.list_networks(session, me.id)}["turing"] == "vetted"
 
 
 def test_expiry_and_sliding_refresh(api, session, two, monkeypatch):

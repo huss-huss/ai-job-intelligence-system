@@ -89,7 +89,11 @@ sleep 2
 
 # 7) Quick API test
 echo "Testing API..."
-curl -s http://localhost:8000/api/jobs | head -c 200
+# The API is private: without a login (or X-Admin-Token) every data endpoint answers 401.
+curl -s -o /dev/null -w "GET /api/jobs without a login: %{http_code} (expected 401)\n" http://localhost:8000/api/jobs
+if [ -n "${ADMIN_TOKEN:-}" ]; then
+  curl -s -H "X-Admin-Token: $ADMIN_TOKEN" http://localhost:8000/api/jobs | head -c 200
+fi
 echo ""
 echo "Backend PID: $BACKEND_PID  Worker PID: $WORKER_PID"
 echo "API: http://localhost:8000  Docs: http://localhost:8000/api/docs"
