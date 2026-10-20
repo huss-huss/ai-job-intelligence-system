@@ -158,7 +158,7 @@ export async function fetchJob(id: number): Promise<Job> {
 }
 
 export async function fetchSources(): Promise<Source[]> {
-  const res = await apiFetch(`/api/sources`);
+  const res = await apiFetch(`/api/sources`, { headers: authHeaders() });
   if (!res.ok) throw new Error("Failed to fetch sources");
   return res.json();
 }
@@ -175,17 +175,17 @@ export async function fetchRuns(params?: { type?: string; limit?: number }): Pro
 export async function triggerScrape(sourceId?: number): Promise<{ job_id?: string; jobs?: { source_id: number; job_id: string }[]; message: string }> {
   const res = await apiFetch(`/api/scrape`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: adminHeaders(),
     body: JSON.stringify(sourceId != null ? { source_id: sourceId } : {}),
   });
-  if (!res.ok) throw new Error("Scrape trigger failed");
+  if (!res.ok) throw new Error(res.status === 401 || res.status === 403 ? "Only the owner can start a scrape" : "Scrape trigger failed");
   return res.json();
 }
 
 export async function triggerAnalyze(jobIds?: number[]): Promise<{ job_id: string; message: string; job_count: number }> {
   const res = await apiFetch(`/api/analyze`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: adminHeaders(),
     body: JSON.stringify(jobIds != null ? { job_ids: jobIds } : {}),
   });
   const data = await res.json().catch(() => ({}));
@@ -199,7 +199,7 @@ export async function triggerAnalyze(jobIds?: number[]): Promise<{ job_id: strin
 export async function createTestJobs(): Promise<{ message: string; inserted: number; skipped: number; total: number }> {
   const res = await apiFetch(`/api/jobs/test`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: adminHeaders(),
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
@@ -215,7 +215,7 @@ export async function createTestJobs(): Promise<{ message: string; inserted: num
 export async function clearRuns(): Promise<{ message: string; deleted: number }> {
   const res = await apiFetch(`/api/runs`, {
     method: "DELETE",
-    headers: { "Content-Type": "application/json" },
+    headers: adminHeaders(),
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
@@ -231,7 +231,7 @@ export async function clearRuns(): Promise<{ message: string; deleted: number }>
 export async function clearJobs(): Promise<{ message: string; deleted_jobs: number; deleted_analyses: number }> {
   const res = await apiFetch(`/api/jobs`, {
     method: "DELETE",
-    headers: { "Content-Type": "application/json" },
+    headers: adminHeaders(),
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
@@ -279,7 +279,10 @@ const ADMIN_TOKEN_KEY = "firstfetch.adminToken";
 /** Fired on window when the stored token changes, so private panels reload. */
 export const AUTH_EVENT = "firstfetch:auth";
 
-/** The owner's ADMIN_TOKEN, kept in this browser only. Without it the dashboard is the public view. */
+/**
+ * The owner's ADMIN_TOKEN, kept in this browser only: a fallback login for a deployment without Telegram
+ * login (the /login page offers it). The owner's login session needs no token for admin operations.
+ */
 export function getAdminToken(): string {
   if (typeof window === "undefined") return "";
   return window.localStorage.getItem(ADMIN_TOKEN_KEY) ?? "";
@@ -317,12 +320,25 @@ export function captureTokenFromUrl(): void {
   window.history.replaceState(null, "", window.location.pathname + window.location.search);
 }
 
-/** Headers that identify the viewer; empty for the public. */
+/** Headers that identify the viewer beyond the session cookie (a stored admin or link token). */
 export function authHeaders(): Record<string, string> {
   const admin = getAdminToken();
   if (admin) return { "X-Admin-Token": admin };
   const user = getUserToken();
   return user ? { "X-User-Token": user } : {};
+}
+
+/**
+ * For the owner's admin operations (scrape, analyze, clear): the admin token if one is stored, otherwise the
+ * owner's session cookie with the CSRF header. The API refuses both for anyone but the owner.
+ */
+function adminHeaders(): Record<string, string> {
+  return { "Content-Type": "application/json", ...CSRF_HEADERS, ...authHeaders() };
+}
+
+/** Admin controls are shown to the owner logged in with Telegram or with the admin token, not via a link. */
+export function canAdmin(me: Me | null | undefined): boolean {
+  return !!me && me.role === "owner" && (me.via === "session" || me.via === "admin");
 }
 
 /** How the viewer is known: a login session (cookie), a /dashboard link token, or the admin token. */
@@ -335,8 +351,8 @@ if (typeof window !== "undefined") {
 }
 
 /**
- * Whose private view this is, or null for the public view. GET /api/auth/session answers 200 either
- * way (no 401 noise for the public), and the answer is shared by every panel until the login changes.
+ * Who is logged in, or null (the dashboard then sends the visitor to /login). GET /api/auth/session
+ * answers 200 either way, and the answer is shared by every panel until the login changes.
  */
 export function fetchMe(): Promise<Me | null> {
   if (!meCache) {
@@ -348,8 +364,29 @@ export function fetchMe(): Promise<Me | null> {
   return meCache;
 }
 
-export function hasViewerToken(): boolean {
-  return Object.keys(authHeaders()).length > 0;
+/** The owner's fallback login: keeps the token in this browser if the API accepts it as the owner's. */
+export async function loginWithAdminToken(token: string): Promise<Me> {
+  setAdminToken(token.trim());
+  const me = await fetchMe();
+  if (me?.via === "admin") return me;
+  setAdminToken("");
+  throw new LoginError("That admin token isn't valid.", 401);
+}
+
+/**
+ * On load: a /dashboard link's #token=... becomes a login session right away (the token isn't kept in
+ * this browser), then GET /api/auth/session says who is looking.
+ */
+export async function resolveViewer(): Promise<Me | null> {
+  captureTokenFromUrl();
+  if (getUserToken()) {
+    try {
+      await convertTokenToSession();
+    } catch {
+      setUserToken(""); // revoked or replaced link: log in instead
+    }
+  }
+  return fetchMe();
 }
 
 /** The user object the Telegram Login Widget passes to data-onauth (id, names, auth_date, hash...). */

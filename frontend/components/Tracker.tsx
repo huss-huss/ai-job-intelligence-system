@@ -1,22 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import Link from "next/link";
-import {
-  APPLICATION_STATUSES,
-  AUTH_EVENT,
-  captureTokenFromUrl,
-  convertTokenToSession,
-  fetchMe,
-  getAdminToken,
-  logout,
-  setAdminToken,
-  setUserToken,
-  type ApplicationStatus,
-  type Me,
-} from "@/lib/api";
+import { APPLICATION_STATUSES, AUTH_EVENT, loginWithAdminToken, logout, resolveViewer, type ApplicationStatus, type Me } from "@/lib/api";
 import { cn } from "@/lib/utils";
-import { KeyRound, Lock, LogIn, LogOut, UserRound } from "lucide-react";
+import { KeyRound, Loader2, LogOut, UserRound } from "lucide-react";
 
 export const STATUS_META: Record<ApplicationStatus, { label: string; cls: string }> = {
   new: { label: "New", cls: "bg-secondary/80 text-muted-foreground border-border/50" },
@@ -104,144 +91,122 @@ export function StatusSelect({
   );
 }
 
-/** Token for writes on a read-only deployment. Stored in localStorage, sent as X-Admin-Token. */
-export function AdminTokenField() {
+/**
+ * The owner's fallback login on /login, for a deployment without Telegram login: the ADMIN_TOKEN, kept in
+ * this browser's localStorage and sent as X-Admin-Token. Never shown in the header.
+ */
+export function AdminTokenLogin({ onLogin }: { onLogin: (me: Me) => void }) {
   const [value, setValue] = useState("");
-  const [saved, setSaved] = useState(false);
-  useEffect(() => {
-    setValue(getAdminToken());
-    setSaved(!!getAdminToken());
-  }, []);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   return (
     <form
-      className="flex items-center gap-2"
-      onSubmit={(e) => {
+      className="space-y-2"
+      onSubmit={async (e) => {
         e.preventDefault();
-        setAdminToken(value.trim());
-        setSaved(!!value.trim());
+        if (!value.trim()) return;
+        setBusy(true);
+        setError(null);
+        try {
+          onLogin(await loginWithAdminToken(value));
+        } catch (err) {
+          setError(err instanceof Error ? err.message : "Login failed");
+          setBusy(false);
+        }
       }}
     >
-      <KeyRound className={cn("h-4 w-4", saved ? "text-emerald-400" : "text-muted-foreground")} aria-hidden="true" />
-      <input
-        type="password"
-        autoComplete="off"
-        placeholder="Admin token"
-        aria-label="Admin token"
-        className="w-36 sm:w-44 rounded-md border border-border/50 bg-secondary/50 px-2 py-1 text-xs placeholder:text-muted-foreground/60 focus:border-primary focus:outline-none"
-        value={value}
-        onChange={(e) => setValue(e.target.value)}
-        onBlur={() => {
-          setAdminToken(value.trim());
-          setSaved(!!value.trim());
-        }}
-      />
+      <div className="flex items-center gap-2">
+        <KeyRound className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+        <input
+          type="password"
+          autoComplete="off"
+          placeholder="Admin token"
+          aria-label="Admin token"
+          className="min-w-0 flex-1 rounded-md border border-border/50 bg-secondary/50 px-2 py-1.5 text-sm placeholder:text-muted-foreground/60 focus:border-primary focus:outline-none"
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+        />
+        <button
+          type="submit"
+          disabled={busy || !value.trim()}
+          className="rounded-md border border-border/50 px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground disabled:opacity-50"
+        >
+          {busy ? "Checking…" : "Use"}
+        </button>
+      </div>
+      {error && (
+        <p role="alert" className="text-xs text-red-400">
+          {error}
+        </p>
+      )}
     </form>
   );
 }
 
-const pillCls = "inline-flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 text-emerald-300";
+const pillCls = "inline-flex min-w-0 items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 text-emerald-300";
 const ghostCls =
   "inline-flex items-center gap-1 rounded-md border border-border/50 px-2 py-1 text-muted-foreground hover:text-foreground hover:border-primary/30 transition-colors";
 
-/** "Log in" in the header: the Telegram login page. */
-export function LoginButton() {
-  return (
-    <Link
-      href="/login"
-      className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground shadow-md hover:opacity-90"
-    >
-      <LogIn className="h-3.5 w-3.5" aria-hidden="true" />
-      Log in
-    </Link>
-  );
-}
-
 /**
- * Header control. Logged in (Telegram session): the name and "Log out". With a /dashboard link token:
- * "Private view", an offer to stay logged in (turns the link into a session) and "Public view".
- * Public: "Log in" and the admin-token field. Also picks up a personal link's #token=... on first load.
+ * Who is logged in, resolved once per login change: undefined while checking, null when nobody is (the
+ * dashboard then goes to /login). Turns a /dashboard link's #token=... into a session first.
  */
-export function ViewerControl() {
-  const [me, setMe] = useState<Me | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [convertError, setConvertError] = useState<string | null>(null);
+export function useViewer(): Me | null | undefined {
+  const [me, setMe] = useState<Me | null | undefined>(undefined);
   const authKey = useAuthKey();
   useEffect(() => {
-    captureTokenFromUrl();
-  }, []);
-  useEffect(() => {
-    fetchMe().then(setMe, () => setMe(null));
+    let cancelled = false;
+    resolveViewer().then(
+      (m) => !cancelled && setMe(m),
+      () => !cancelled && setMe(null),
+    );
+    return () => {
+      cancelled = true;
+    };
   }, [authKey]);
-  if (!me)
-    return (
-      <div className="flex flex-wrap items-center justify-end gap-2 sm:gap-3">
-        <AdminTokenField />
-        <LoginButton />
-      </div>
-    );
-  if (me.via === "session")
-    return (
-      <div className="flex flex-wrap items-center justify-end gap-2 text-xs">
-        <span className={pillCls} data-testid="viewer-name">
-          <UserRound className="h-3 w-3" aria-hidden="true" />
-          {me.display_name}
-          {me.role === "owner" && <span className="text-emerald-300/70">· owner</span>}
-        </span>
-        <button
-          type="button"
-          className={ghostCls}
-          disabled={busy}
-          onClick={async () => {
-            setBusy(true);
-            await logout();
-            setBusy(false);
-          }}
-        >
-          <LogOut className="h-3 w-3" aria-hidden="true" />
-          Log out
-        </button>
-      </div>
-    );
+  return me;
+}
+
+/** Header control for a logged-in viewer: their name (and "owner") and "Log out". */
+export function ViewerControl({ me }: { me: Me }) {
+  const [busy, setBusy] = useState(false);
   return (
-    <div className="flex flex-wrap items-center justify-end gap-2 text-xs">
-      <span className={pillCls}>
-        <Lock className="h-3 w-3" aria-hidden="true" />
-        Private view: {me.display_name}
+    <div className="flex min-w-0 flex-wrap items-center justify-end gap-2 text-xs">
+      <span className={pillCls} data-testid="viewer-name">
+        <UserRound className="h-3 w-3 shrink-0" aria-hidden="true" />
+        <span className="truncate">{me.display_name}</span>
+        {me.role === "owner" && (
+          <span className="text-emerald-300/70">
+            {me.display_name.toLowerCase() === "owner" ? "" : "· owner"}
+            {me.via === "admin" ? " (admin token)" : ""}
+          </span>
+        )}
       </span>
-      {me.via === "token" && (
-        <button
-          type="button"
-          className={ghostCls}
-          disabled={busy}
-          title="Start a login session from this link, so the link isn't kept in this browser"
-          onClick={async () => {
-            setBusy(true);
-            setConvertError(null);
-            try {
-              await convertTokenToSession();
-            } catch (e) {
-              setConvertError(e instanceof Error ? e.message : "Failed");
-            } finally {
-              setBusy(false);
-            }
-          }}
-        >
-          <LogIn className="h-3 w-3" aria-hidden="true" />
-          Stay logged in
-        </button>
-      )}
-      {convertError && <span className="text-red-400">{convertError}</span>}
       <button
         type="button"
         className={ghostCls}
-        onClick={() => {
-          setAdminToken("");
-          setUserToken("");
+        disabled={busy}
+        onClick={async () => {
+          setBusy(true);
+          await logout(); // the dashboard notices (AUTH_EVENT) and goes to /login
+          setBusy(false);
         }}
       >
         <LogOut className="h-3 w-3" aria-hidden="true" />
-        Public view
+        Log out
       </button>
+    </div>
+  );
+}
+
+/** Full-page placeholder while the login is checked: nothing of the dashboard is rendered before that. */
+export function AuthPending({ label }: { label: string }) {
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-background" role="status" aria-live="polite">
+      <div className="flex items-center gap-2 text-sm text-muted-foreground">
+        <Loader2 className="h-4 w-4 animate-spin text-primary" aria-hidden="true" />
+        {label}
+      </div>
     </div>
   );
 }

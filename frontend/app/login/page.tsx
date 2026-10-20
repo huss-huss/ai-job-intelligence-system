@@ -3,7 +3,8 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { fetchMe, loginWithTelegram, logout, type Me, type TelegramUser } from "@/lib/api";
+import { loginWithTelegram, logout, resolveViewer, type Me, type TelegramUser } from "@/lib/api";
+import { AdminTokenLogin } from "@/components/Tracker";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ArrowLeft, Briefcase, Loader2, LogOut, ShieldCheck } from "lucide-react";
 
@@ -47,7 +48,7 @@ export default function LoginPage() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    fetchMe().then(setMe);
+    resolveViewer().then(setMe, () => setMe(null));
   }, []);
 
   const onAuth = useRef(async (user: TelegramUser) => {
@@ -66,7 +67,7 @@ export default function LoginPage() {
     <div className="min-h-screen bg-background">
       <header className="border-b border-border/50 bg-gradient-to-r from-card via-card/95 to-card/90 shadow-lg shadow-primary/5">
         <div className="container mx-auto flex min-h-16 flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3">
-          <Link href="/" className="flex min-w-0 items-center gap-3">
+          <div className="flex min-w-0 items-center gap-3">
             <div className="p-2 rounded-lg bg-primary/10 border border-primary/20">
               <Briefcase className="h-5 w-5 text-primary" />
             </div>
@@ -74,11 +75,13 @@ export default function LoginPage() {
               <h1 className="text-lg font-bold sm:text-xl">AI Job Intelligence</h1>
               <p className="text-xs text-muted-foreground">Smart Job Discovery Platform</p>
             </div>
-          </Link>
-          <Link href="/" className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
-            <ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" />
-            Back to jobs
-          </Link>
+          </div>
+          {me && (
+            <Link href="/" className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
+              <ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" />
+              Back to jobs
+            </Link>
+          )}
         </div>
       </header>
 
@@ -90,11 +93,17 @@ export default function LoginPage() {
             </div>
             <CardTitle className="text-2xl">Log in</CardTitle>
             <p className="text-sm text-muted-foreground">
-              See jobs ranked for your own profile, with your statuses and talent-network progress.
+              This dashboard is private. Log in to see jobs ranked for your own profile, with your statuses and
+              talent-network progress.
             </p>
           </CardHeader>
           <CardContent className="space-y-5">
-            {me ? (
+            {me === undefined ? (
+              <div className="flex items-center justify-center gap-2 py-6 text-sm text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                Checking your login…
+              </div>
+            ) : me ? (
               <div className="space-y-4 text-center">
                 <p className="text-sm">
                   You&apos;re logged in as <span className="font-semibold text-emerald-300">{me.display_name}</span>.
@@ -138,6 +147,15 @@ export default function LoginPage() {
               <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-300">
                 Web login isn&apos;t configured on this deployment (NEXT_PUBLIC_TELEGRAM_BOT_USERNAME).
               </div>
+            )}
+            {me === null && (
+              <details className="rounded-lg border border-border/50 bg-secondary/20 px-3 py-2 text-sm">
+                <summary className="cursor-pointer text-xs text-muted-foreground hover:text-foreground">Owner: use the admin token instead</summary>
+                <div className="mt-3">
+                  <AdminTokenLogin onLogin={() => router.replace("/")} />
+                  <p className="mt-2 text-xs text-muted-foreground">Kept in this browser only. Log out forgets it.</p>
+                </div>
+              </details>
             )}
             <ul className="space-y-1.5 text-xs text-muted-foreground">
               <li>• Only people the owner invited to the Telegram bot can log in.</li>

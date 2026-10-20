@@ -30,9 +30,9 @@ export function JobsList({ filters, onPageChange, refreshKey = 0 }: JobsListProp
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("active");
   const [statuses, setStatuses] = useState<Record<number, ApplicationStatus>>({});
   const [statusError, setStatusError] = useState<string | null>(null);
-  // Tracker statuses are private: without a valid token this is the public view, with none of them.
+  // The viewer's own tracker statuses (every viewer is logged in; the dashboard is private).
   const [privateView, setPrivateView] = useState(false);
-  // With a token the API scores and ranks every job for that viewer (user_job_scores).
+  // The API scores and ranks every job for the viewer (user_job_scores).
   const [rankedFor, setRankedFor] = useState<string | null>(null);
   const authKey = useAuthKey();
 
