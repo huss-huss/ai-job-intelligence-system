@@ -527,6 +527,11 @@ which turns the link into a session (`POST /api/auth/token-session`) and forgets
 | Login page | Logged in: ranked for the member, their statuses, "Log out" |
 |---|---|
 | ![The /login page with the Telegram login button](docs/screenshots/web-login.png) | ![Logged in as a member](docs/screenshots/web-login-logged-in.png) |
+| ![390px header, logged out: title, then the admin-token field and Log in](docs/screenshots/web-login-header-390-logged-out.png) | ![390px header, logged in: title, then the name and Log out](docs/screenshots/web-login-header-390-logged-in.png) |
+
+On a 390px phone the header wraps: the title stays on one line and the login controls move under it. The
+page is exactly as wide as the viewport (`document.documentElement.scrollWidth`) at 390, 768 and 1400px,
+logged out and logged in, on `/` and `/login`.
 
 The screenshots come from a local run with system Chrome (Playwright), the API and the static export on
 one origin, and a seeded Postgres. telegram.org isn't contacted there: the widget script is replaced by a

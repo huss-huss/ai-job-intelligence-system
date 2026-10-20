@@ -125,9 +125,9 @@ export function AdminTokenField() {
       <input
         type="password"
         autoComplete="off"
-        placeholder="Admin token (private view)"
+        placeholder="Admin token"
         aria-label="Admin token"
-        className="w-44 rounded-md border border-border/50 bg-secondary/50 px-2 py-1 text-xs placeholder:text-muted-foreground/60 focus:border-primary focus:outline-none"
+        className="w-36 sm:w-44 rounded-md border border-border/50 bg-secondary/50 px-2 py-1 text-xs placeholder:text-muted-foreground/60 focus:border-primary focus:outline-none"
         value={value}
         onChange={(e) => setValue(e.target.value)}
         onBlur={() => {
@@ -174,14 +174,14 @@ export function ViewerControl() {
   }, [authKey]);
   if (!me)
     return (
-      <div className="flex items-center gap-3">
+      <div className="flex flex-wrap items-center justify-end gap-2 sm:gap-3">
         <AdminTokenField />
         <LoginButton />
       </div>
     );
   if (me.via === "session")
     return (
-      <div className="flex items-center gap-2 text-xs">
+      <div className="flex flex-wrap items-center justify-end gap-2 text-xs">
         <span className={pillCls} data-testid="viewer-name">
           <UserRound className="h-3 w-3" aria-hidden="true" />
           {me.display_name}
@@ -203,7 +203,7 @@ export function ViewerControl() {
       </div>
     );
   return (
-    <div className="flex items-center gap-2 text-xs">
+    <div className="flex flex-wrap items-center justify-end gap-2 text-xs">
       <span className={pillCls}>
         <Lock className="h-3 w-3" aria-hidden="true" />
         Private view: {me.display_name}

@@ -65,13 +65,13 @@ export default function LoginPage() {
   return (
     <div className="min-h-screen bg-background">
       <header className="border-b border-border/50 bg-gradient-to-r from-card via-card/95 to-card/90 shadow-lg shadow-primary/5">
-        <div className="container mx-auto flex h-16 items-center justify-between px-4">
-          <Link href="/" className="flex items-center gap-3">
+        <div className="container mx-auto flex min-h-16 flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3">
+          <Link href="/" className="flex min-w-0 items-center gap-3">
             <div className="p-2 rounded-lg bg-primary/10 border border-primary/20">
               <Briefcase className="h-5 w-5 text-primary" />
             </div>
             <div>
-              <h1 className="text-xl font-bold">AI Job Intelligence</h1>
+              <h1 className="text-lg font-bold sm:text-xl">AI Job Intelligence</h1>
               <p className="text-xs text-muted-foreground">Smart Job Discovery Platform</p>
             </div>
           </Link>
@@ -82,7 +82,7 @@ export default function LoginPage() {
         </div>
       </header>
 
-      <main className="container mx-auto flex justify-center px-4 py-16">
+      <main className="container mx-auto flex justify-center px-4 py-10 sm:py-16">
         <Card className="w-full max-w-md border-border/50 shadow-lg shadow-primary/5 animate-fade-in">
           <CardHeader className="items-center text-center">
             <div className="mb-2 rounded-full border border-primary/20 bg-primary/10 p-3">
