@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { fetchApplications, fetchJobs, fetchMe, hasViewerToken, getHire, getMatch, getRank, getScoreScope, updateApplication, type ApplicationStatus, type Job, type JobSort } from "@/lib/api";
+import { fetchApplications, fetchJobs, fetchMe, getHire, getMatch, getRank, getScoreScope, updateApplication, type ApplicationStatus, type Job, type JobSort } from "@/lib/api";
 import { formatDate, scoreColor } from "@/lib/utils";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -41,9 +41,9 @@ export function JobsList({ filters, onPageChange, refreshKey = 0 }: JobsListProp
     setLoading(true);
     setError(null);
     (async () => {
-      const [apps, me] = hasViewerToken()
-        ? await Promise.all([fetchApplications().catch(() => null), fetchMe().catch(() => null)])
-        : [null, null];
+      // Logged in (session cookie) or a token: the private view. fetchMe is one shared request.
+      const me = await fetchMe();
+      const apps = me ? await fetchApplications().catch(() => null) : null;
       const isPrivate = apps !== null;
       const common = {
         source: filters.source,
