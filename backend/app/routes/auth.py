@@ -2,6 +2,8 @@
 
 * ``POST /api/auth/telegram``: the Login Widget payload. A genuine, fresh payload from an invited user
   starts a session (``ff_session`` cookie); anyone else gets the same 403.
+* ``POST /api/auth/link``: a one-time login link from the bot (/login) starts a session; the link is
+  used up either way, and a wrong, used or expired one gets 401.
 * ``POST /api/auth/token-session``: turns a valid ``X-User-Token`` (a /dashboard link) into a session,
   so the link doesn't need to stay in this browser's storage.
 * ``POST /api/auth/logout``: ends the cookie's session and clears the cookie.
@@ -80,6 +82,22 @@ def telegram_login(
     if user is None:
         session.commit()
         raise HTTPException(403, NOT_ALLOWED)
+    return _start(session, response, request, user)
+
+
+class LinkIn(BaseModel):
+    token: str
+
+
+@router.post("/link", response_model=SessionOut, response_model_exclude_none=True)
+def link_login(
+    request: Request, response: Response, body: LinkIn, session: Session = Depends(get_sync_db)
+) -> SessionOut:
+    _require_csrf(request)
+    user = web_sessions.consume_login_link(session, body.token)
+    if user is None:
+        session.commit()  # a used or expired link stays gone
+        raise HTTPException(401, "This login link is invalid, used or expired. Send /login to the bot for a new one.")
     return _start(session, response, request, user)
 
 

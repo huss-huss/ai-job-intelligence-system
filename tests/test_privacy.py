@@ -85,6 +85,7 @@ PUBLIC_PATHS = {
     "/api/health",
     "/api/auth/session",
     "/api/auth/telegram",
+    "/api/auth/link",
     "/api/auth/token-session",
     "/api/auth/logout",
     "/api/telegram/webhook",

@@ -62,6 +62,7 @@ PUBLIC_PATHS = frozenset(
         "/api/health",
         "/api/auth/session",  # {"authenticated": false} for the public
         "/api/auth/telegram",  # login: the widget's signature and the CSRF header
+        "/api/auth/link",  # login: a one-time link from the bot and the CSRF header
         "/api/auth/token-session",  # a /dashboard link to a session: the token and the CSRF header
         "/api/auth/logout",
         WEBHOOK_PATH,  # Telegram: its own secret header

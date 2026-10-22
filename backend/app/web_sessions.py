@@ -19,6 +19,12 @@ SHA-256 only. Sessions last ``SESSION_TTL`` from the last use (sliding), refresh
 ``REFRESH_EVERY`` so a busy page doesn't write on every request. Logout deletes the row; removing a
 member, a new /dashboard link and /dashboard revoke delete all of that user's sessions.
 
+**Login links.** The bot's /login (or the login page's "Open Telegram" button, which sends
+``/start login``) answers an invited user with a one-time link to ``<dashboard>/login#link=<token>``.
+The token is 32 random bytes, only its SHA-256 is stored, it expires after ``LINK_TTL`` and using it
+deletes it, so it works once. It sits in the URL fragment, which browsers never send to a server, and
+the page exchanges it with a POST (CSRF header), so a link preview or prefetch can't use it up.
+
 Nothing here logs ids, names, hashes or session ids.
 """
 
@@ -34,7 +40,7 @@ from typing import Any
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from app.models import User, WebSession
+from app.models import LoginLink, User, WebSession
 
 COOKIE_NAME = "ff_session"
 # Cookie-authenticated writes must carry this header (CSRF, see app/auth.py).
@@ -44,6 +50,7 @@ SESSION_BYTES = 32  # 256 bits
 SESSION_TTL = timedelta(days=30)
 REFRESH_EVERY = timedelta(hours=1)
 LOGIN_MAX_AGE = timedelta(minutes=10)
+LINK_TTL = timedelta(minutes=10)
 LOGIN_CLOCK_SKEW = timedelta(minutes=1)  # auth_date this far in the future is still accepted
 MAX_FIELDS = 16
 MAX_VALUE_LEN = 512
@@ -181,13 +188,43 @@ def delete_session(session: Session, token: str | None) -> bool:
 
 
 def revoke_user_sessions(session: Session, user_id: int) -> int:
-    """Log this user out everywhere."""
+    """Log this user out everywhere, and void the login links they haven't used yet."""
     deleted = session.execute(delete(WebSession).where(WebSession.user_id == user_id)).rowcount
+    session.execute(delete(LoginLink).where(LoginLink.user_id == user_id))
     session.flush()
     return deleted or 0
 
 
 def purge_expired(session: Session, now: datetime | None = None) -> int:
-    deleted = session.execute(delete(WebSession).where(WebSession.expires_at <= (now or utcnow()))).rowcount
+    now = now or utcnow()
+    deleted = session.execute(delete(WebSession).where(WebSession.expires_at <= now)).rowcount
+    session.execute(delete(LoginLink).where(LoginLink.expires_at <= now))
     session.flush()
     return deleted or 0
+
+
+# --------------------------------------------------------------------------- login links
+
+
+def create_login_link(session: Session, user: User, now: datetime | None = None) -> str:
+    """A one-time login link token for this user (shown once; only its hash is stored)."""
+    now = now or utcnow()
+    session.execute(delete(LoginLink).where(LoginLink.expires_at <= now))
+    token = secrets.token_urlsafe(SESSION_BYTES)
+    session.add(LoginLink(token_hash=_sha256(token), user_id=user.id, created_at=now, expires_at=now + LINK_TTL))
+    session.flush()
+    return token
+
+
+def consume_login_link(session: Session, token: str | None, now: datetime | None = None) -> User | None:
+    """The user a login link belongs to, or None. A known link is deleted, used or expired, so it works once."""
+    if not token or len(token) > 128:
+        return None
+    now = now or utcnow()
+    row = session.execute(select(LoginLink).where(LoginLink.token_hash == _sha256(token))).scalar_one_or_none()
+    if row is None:
+        return None
+    user_id, expires_at = row.user_id, _aware(row.expires_at)
+    session.delete(row)
+    session.flush()
+    return session.get(User, user_id) if expires_at > now else None

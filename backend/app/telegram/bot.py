@@ -7,6 +7,8 @@
   each on their own profile, tracker and feedback. /invite, /users and /remove are owner-only.
 * Any other chat is ignored without a reply, except `/start <code>` (an invite link) in a
   private chat, which is checked against the stored code hashes and throttled (app/users.py).
+* /login (and `/start login`, what the dashboard's "Open Telegram" button sends) answers a user with a
+  one-time dashboard login link (app/web_sessions.py). From a stranger it's ignored like anything else.
 
 Nothing here logs chat ids, names, codes or tokens.
 """
@@ -19,7 +21,7 @@ from datetime import datetime, timedelta
 
 from sqlalchemy.orm import Session
 
-from app import tracker, users
+from app import tracker, users, web_sessions
 from app.models import User
 from app.telegram import ai_cmds, profile_cmds
 from app.telegram.client import TelegramClient
@@ -54,6 +56,7 @@ COMMANDS = [
     ("country", "/country <name> [ISO code]"),
     ("seniority", "/seniority <levels>, e.g. mid,senior"),
     ("employment", "/employment <types>, e.g. full_time,contract"),
+    ("login", "A one-time link that logs you in to the dashboard"),
     ("dashboard", "A private link to your statuses on the dashboard"),
     ("cover", "/cover <job id>: a cover letter for a job, from your resume"),
     ("cv", "Your resume (CV) for cover letters: paste it after /cv or upload a file"),
@@ -295,6 +298,33 @@ def cmd_dashboard(ctx: Ctx, args) -> None:
     )
 
 
+LOGIN_START = "login"  # /start login: the dashboard's "Open Telegram" deep link
+
+
+def cmd_login(ctx: Ctx, _args) -> None:
+    base = safe_url(ctx.settings.dashboard_url)
+    if not base:
+        ctx.send("The dashboard URL isn't configured (TELEGRAM_DASHBOARD_URL); ask the owner.")
+        return
+    token = web_sessions.create_login_link(ctx.session, ctx.user, ctx.now)
+    ctx.session.commit()
+    minutes = int(web_sessions.LINK_TTL.total_seconds() // 60)
+    ctx.send(
+        "<b>Log in to your dashboard</b>\n"
+        f"Tap the button within {minutes} minutes. It works once, only for you: don't forward it.",
+        reply_markup={
+            "inline_keyboard": [[{"text": "Log in to FirstFetch", "url": f"{base.rstrip('/')}/login#link={token}"}]]
+        },
+    )
+
+
+def cmd_start(ctx: Ctx, args) -> None:
+    if args and args[0].lower() == LOGIN_START:
+        cmd_login(ctx, [])
+    else:
+        cmd_help(ctx, args)
+
+
 # --------------------------------------------------------------------------- owner commands
 
 
@@ -346,7 +376,8 @@ def cmd_remove(ctx: Ctx, args) -> None:
 
 
 HANDLERS = {
-    "start": cmd_help,
+    "start": cmd_start,
+    "login": cmd_login,
     "help": cmd_help,
     "top": cmd_top,
     "today": cmd_today,
@@ -412,6 +443,8 @@ def handle_stranger(
     parsed = _command((message or {}).get("text") or "")
     if not parsed or parsed[0] != "start" or len(parsed[1]) != 1:
         return "ignored:unknown-chat"
+    if parsed[1][0].lower() == LOGIN_START:
+        return "ignored:unknown-chat"  # the login button, from someone who isn't invited: not an invite try
     sender = (message or {}).get("from") or {}
     result = users.redeem_invite(session, chat_id, parsed[1][0], sender.get("first_name"), now)
     session.commit()
