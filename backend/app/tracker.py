@@ -37,7 +37,7 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.models import Application, AppSetting, JobAnalysis, JobRaw, Run, UserJobScore
+from app.models import Application, AppSetting, JobAnalysis, JobRaw, Run, Source, UserJobScore
 from app.models.tracker import APPLICATION_STATUSES
 
 STATUSES = APPLICATION_STATUSES
@@ -241,6 +241,12 @@ class Candidate:
         return hire_probability(self.analysis)
 
 
+def enabled_source():
+    """Only jobs from an enabled source: disabling a source (e.g. a board that charges candidates to
+    apply) hides its jobs from the digest, /top, /today and the dashboard, not just new scrapes."""
+    return JobRaw.source_id.in_(select(Source.id).where(Source.enabled.is_(True)))
+
+
 def _app_join(user_id: int):
     return (Application.job_id == JobRaw.id) & (Application.user_id == user_id)
 
@@ -255,7 +261,8 @@ def candidates(
     include_ineligible: bool = False,
 ) -> list[Candidate]:
     """Jobs this user hasn't acted on (status new or untracked), best first by their own score after
-    their own feedback. Jobs without a score row for the user are skipped (see score_missing).
+    their own feedback. Jobs without a score row for the user are skipped (see score_missing), and so
+    are jobs from a disabled source (enabled_source).
 
     Filtering on eligibility happens in Python: the volume is a few hundred rows at most.
     """
@@ -263,7 +270,7 @@ def candidates(
         select(JobRaw, UserJobScore, Application)
         .join(UserJobScore, (UserJobScore.job_id == JobRaw.id) & (UserJobScore.user_id == user_id))
         .outerjoin(Application, _app_join(user_id))
-        .where((Application.id.is_(None)) | (Application.status == "new"))
+        .where((Application.id.is_(None)) | (Application.status == "new"), enabled_source())
     )
     if since is not None:
         stmt = stmt.where(JobRaw.created_at >= since)
