@@ -207,3 +207,58 @@ def test_risk_flags_subtract_points(profile):
 def test_profile_rejects_out_of_range_weights():
     with pytest.raises(ValueError):
         CandidateProfile(skills={"python": 5})
+
+
+NITRA = (
+    "Nitra maintains a hybrid work policy, with team members working from the office four days per week and "
+    "Wednesdays designated as a work-from-home day. The base salary range reflects the minimum and maximum "
+    "target for new hire salaries for the position across all US locations."
+)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        NITRA,
+        "You'll be in our office 3 days a week in Austin.",
+        "We work two days per week in the office and the rest from home.",
+        "This is a hybrid role based in London.",
+        "3-day-in-office hybrid schedule.",
+    ],
+)
+def test_office_days_in_the_description_make_a_remote_tagged_job_ineligible(profile, text):
+    p = job(location="Remote", description=job().description + " " + text)
+    verdict, why = location_eligibility(p, profile)
+    assert verdict is False and "office" in why
+    profile.location.accepts_onsite = True
+    assert location_eligibility(p, profile)[1] != why  # someone open to on-site isn't filtered by it
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "This is not a hybrid role: fully remote, worldwide.",
+        "Experience with hybrid cloud and on-prem infrastructure.",
+        "Remote-first; visit the office whenever you like.",
+        "Overlap of 4 hours with the US time zone.",
+        "You must be able to work in the US time zone.",
+    ],
+)
+def test_lookalikes_are_not_restrictions(profile, text):
+    p = job(location="Worldwide", description=job().description + " " + text)
+    assert location_eligibility(p, profile)[0] is True
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Base salary for new hires across all US locations.",
+        "Candidates must be eligible to work in the United States.",
+        "Requires US work authorization.",
+        "US-based candidates only.",
+        "Applicants must reside in the US.",
+    ],
+)
+def test_us_only_wording_in_the_description(profile, text):
+    p = job(location="Remote", description=job().description + " " + text)
+    assert location_eligibility(p, profile) == (False, "Description restricts applicants by country")
