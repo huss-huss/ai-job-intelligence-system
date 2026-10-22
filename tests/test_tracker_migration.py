@@ -17,7 +17,7 @@ from tests.sqlite_support import alembic_config, sqlite_engine
 TRACKER_TABLES = {"applications", "talent_networks", "app_settings"}
 USER_TABLES = {"users", "invites", "auth_throttle", "user_job_scores"}  # 004_multi_user
 LLM_TABLES = {"llm_usage"}  # 005_llm_budget
-SESSION_TABLES = {"sessions"}  # 006_web_sessions
+SESSION_TABLES = {"sessions", "login_links"}  # 006_web_sessions, 007_login_links
 OWN_TABLES = TRACKER_TABLES | USER_TABLES | LLM_TABLES | SESSION_TABLES
 SCHEMA = "firstfetch_migration_test"
 

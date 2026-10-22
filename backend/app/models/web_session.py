@@ -1,4 +1,4 @@
-"""Dashboard login sessions ("Log in with Telegram", app/web_sessions.py).
+"""Dashboard login sessions and the bot's one-time login links (app/web_sessions.py).
 
 The cookie carries a random 256-bit session id; only its SHA-256 is stored here. A row dies with its
 user (ON DELETE CASCADE, and app/users.py deletes them explicitly too), when it expires, on logout,
@@ -25,3 +25,15 @@ class WebSession(Base):
     last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     # SHA-256 of the User-Agent at login, so a list of sessions can be told apart without storing it.
     user_agent_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+
+class LoginLink(Base):
+    """A one-time login link the bot sent (/login). Only its SHA-256 is stored; using it deletes the row."""
+
+    __tablename__ = "login_links"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

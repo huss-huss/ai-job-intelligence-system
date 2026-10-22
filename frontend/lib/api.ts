@@ -426,6 +426,23 @@ export async function loginWithTelegram(user: TelegramUser): Promise<Me> {
   return { role: data.role, display_name: data.display_name, via: "session" };
 }
 
+/** Exchanges a one-time login link from the bot (/login) for a session; the link works once. */
+export async function loginWithLink(token: string): Promise<Me> {
+  const res = await authPost(`/api/auth/link`, { body: JSON.stringify({ token }) });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new LoginError(
+      res.status === 401
+        ? "This login link was already used or has expired. Tap “Open Telegram” for a new one."
+        : "Login isn't available right now.",
+      res.status,
+    );
+  }
+  window.localStorage.removeItem(USER_TOKEN_KEY);
+  window.dispatchEvent(new Event(AUTH_EVENT));
+  return { role: data.role, display_name: data.display_name, via: "session" };
+}
+
 /** Turns the /dashboard link's token into a login session, then forgets the token in this browser. */
 export async function convertTokenToSession(): Promise<void> {
   const token = getUserToken();

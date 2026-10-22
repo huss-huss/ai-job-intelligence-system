@@ -16,9 +16,9 @@ SCHEMA = "firstfetch_web_sessions_test"
 NOW = datetime(2026, 10, 20, tzinfo=UTC)
 
 
-def test_006_is_the_single_head_after_005():
+def test_006_follows_005_on_a_single_head():
     script = ScriptDirectory.from_config(alembic_config())
-    assert script.get_heads() == ["006_web_sessions"]
+    assert len(script.get_heads()) == 1
     assert script.get_revision("006_web_sessions").down_revision == "005_llm_budget"
 
 
@@ -49,13 +49,14 @@ def test_sqlite_upgrade_check_downgrade(tmp_path):
         assert "sessions" not in inspect(conn).get_table_names()
     with engine.begin() as conn:
         command.upgrade(alembic_config(conn), "006_web_sessions")
-        _check(conn)
+        assert "sessions" in inspect(conn).get_table_names()
     with engine.begin() as conn:
         command.downgrade(alembic_config(conn), "005_llm_budget")
         assert "sessions" not in inspect(conn).get_table_names()
         assert conn.execute(text("SELECT count(*) FROM users WHERE id = :u"), {"u": uid}).scalar() == 1
     with engine.begin() as conn:
         command.upgrade(alembic_config(conn), "head")
+        _check(conn)  # the models match at head (007 adds login_links on top)
         _use_006(conn, uid)
     engine.dispose()
 

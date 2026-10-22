@@ -3,14 +3,24 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { loginWithTelegram, logout, resolveViewer, type Me, type TelegramUser } from "@/lib/api";
+import { loginWithLink, loginWithTelegram, logout, resolveViewer, type Me, type TelegramUser } from "@/lib/api";
 import { AdminTokenLogin } from "@/components/Tracker";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { ArrowLeft, Briefcase, Loader2, LogOut, ShieldCheck } from "lucide-react";
+import { ArrowLeft, Briefcase, Loader2, LogOut, Send, ShieldCheck } from "lucide-react";
 
 // Set on the dashboard's Vercel project; the bot's domain must be set with BotFather's /setdomain.
 const BOT_USERNAME = (process.env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME ?? "").replace(/^@/, "");
 const WIDGET_SRC = "https://telegram.org/js/telegram-widget.js?22";
+// The bot answers /start login with a one-time button back to /login#link=<token>.
+const BOT_LOGIN_URL = BOT_USERNAME ? `https://t.me/${BOT_USERNAME}?start=login` : "";
+
+/** The one-time token from the bot's button, removed from the address bar so it isn't kept in history. */
+function takeLinkToken(): string | null {
+  const match = window.location.hash.match(/^#link=([A-Za-z0-9_-]{20,128})$/);
+  if (!match) return null;
+  window.history.replaceState(null, "", window.location.pathname + window.location.search);
+  return match[1];
+}
 
 declare global {
   interface Window {
@@ -48,8 +58,21 @@ export default function LoginPage() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    resolveViewer().then(setMe, () => setMe(null));
-  }, []);
+    const token = takeLinkToken();
+    if (!token) {
+      resolveViewer().then(setMe, () => setMe(null));
+      return;
+    }
+    setBusy(true);
+    loginWithLink(token).then(
+      () => router.replace("/"),
+      (e) => {
+        setError(e instanceof Error ? e.message : "Login failed");
+        setBusy(false);
+        resolveViewer().then(setMe, () => setMe(null));
+      },
+    );
+  }, [router]);
 
   const onAuth = useRef(async (user: TelegramUser) => {
     setBusy(true);
@@ -127,16 +150,35 @@ export default function LoginPage() {
               </div>
             ) : BOT_USERNAME ? (
               <>
-                <div className="rounded-lg border border-border/50 bg-secondary/30 px-4 py-6">
-                  {busy ? (
-                    <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground">
-                      <Loader2 className="h-4 w-4 animate-spin text-primary" />
-                      Signing you in…
-                    </div>
-                  ) : (
-                    <TelegramLoginWidget onAuth={onAuth} />
-                  )}
-                </div>
+                {busy ? (
+                  <div className="flex items-center justify-center gap-2 rounded-lg border border-border/50 bg-secondary/30 px-4 py-6 text-sm text-muted-foreground">
+                    <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                    Signing you in…
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    <a
+                      href={BOT_LOGIN_URL}
+                      className="flex w-full items-center justify-center gap-2 rounded-lg bg-[#2AABEE] px-4 py-3 text-sm font-semibold text-white shadow-md hover:opacity-90"
+                      data-testid="telegram-open"
+                    >
+                      <Send className="h-4 w-4" aria-hidden="true" />
+                      Open Telegram to log in
+                    </a>
+                    <p className="text-center text-xs text-muted-foreground">
+                      Press <span className="font-semibold">Start</span> in the bot (or send /login), then tap the
+                      button it sends you.
+                    </p>
+                    <details className="rounded-lg border border-border/50 bg-secondary/20 px-3 py-2 text-sm">
+                      <summary className="cursor-pointer text-xs text-muted-foreground hover:text-foreground">
+                        Or log in with your phone number (Telegram widget)
+                      </summary>
+                      <div className="mt-3">
+                        <TelegramLoginWidget onAuth={onAuth} />
+                      </div>
+                    </details>
+                  </div>
+                )}
                 {error && (
                   <div role="alert" className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-red-400">
                     {error}

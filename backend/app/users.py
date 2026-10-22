@@ -36,6 +36,7 @@ from app.models import (
     AuthThrottle,
     Invite,
     LlmUsage,
+    LoginLink,
     TalentNetworkStatus,
     User,
     UserJobScore,
@@ -126,6 +127,7 @@ def delete_user_data(session: Session, user_id: int) -> None:
     session.execute(delete(TalentNetworkStatus).where(TalentNetworkStatus.user_id == user_id))
     session.execute(delete(UserJobScore).where(UserJobScore.user_id == user_id))
     session.execute(delete(WebSession).where(WebSession.user_id == user_id))  # logged out of the dashboard
+    session.execute(delete(LoginLink).where(LoginLink.user_id == user_id))
     session.execute(update(Invite).where(Invite.used_by == user_id).values(used_by=None))
     # Spend already made still counts toward the month: the ledger rows (tokens, cost) lose the link.
     session.execute(update(LlmUsage).where(LlmUsage.user_id == user_id).values(user_id=None))

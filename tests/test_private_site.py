@@ -46,6 +46,7 @@ ADMIN_OPS = [
 USER_WRITES = {"/api/applications/{job_id}", "/api/talent-networks/{slug}"}
 OWN_SECRET_WRITES = {  # each checks its own secret or credentials, see main.PUBLIC_PATHS
     "/api/auth/telegram",
+    "/api/auth/link",
     "/api/auth/token-session",
     "/api/auth/logout",
     "/api/telegram/webhook",
