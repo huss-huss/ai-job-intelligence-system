@@ -19,6 +19,7 @@ from app.database import get_db
 from app.models import Application, JobAnalysis, JobRaw, UserJobScore
 from app.routes.applications import parse_statuses
 from app.schemas import JobAnalysisOut, JobOut, Paginated
+from app.tracker import enabled_source
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 
@@ -162,6 +163,8 @@ async def list_jobs(
     base = select(JobRaw).options(selectinload(JobRaw.analysis)).add_columns(UserJobScore)
     base = _join_user_scores(base, viewer.user_id)
     count_stmt = _join_user_scores(select(func.count()).select_from(JobRaw), viewer.user_id)
+    base = base.where(enabled_source())  # a disabled source's jobs are hidden (tracker.enabled_source)
+    count_stmt = count_stmt.where(enabled_source())
     if source is not None:
         base = base.where(JobRaw.source_id == source)
         count_stmt = count_stmt.where(JobRaw.source_id == source)

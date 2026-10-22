@@ -14,9 +14,9 @@ from tests.test_tracker_migration import _check
 NOW = datetime(2026, 10, 22, tzinfo=UTC)
 
 
-def test_007_is_the_single_head_after_006():
+def test_007_follows_006_on_a_single_head():
     script = ScriptDirectory.from_config(alembic_config())
-    assert script.get_heads() == ["007_login_links"]
+    assert len(script.get_heads()) == 1
     assert script.get_revision("007_login_links").down_revision == "006_web_sessions"
 
 
@@ -29,7 +29,6 @@ def test_sqlite_upgrade_check_downgrade(tmp_path):
         assert "login_links" not in inspect(conn).get_table_names()
     with engine.begin() as conn:
         command.upgrade(alembic_config(conn), "007_login_links")
-        _check(conn)
         (fk,) = inspect(conn).get_foreign_keys("login_links")
         assert fk["referred_table"] == "users" and fk["options"].get("ondelete") == "CASCADE"
         insert = text("INSERT INTO login_links (token_hash, user_id, expires_at) VALUES (:h, :u, :e)")
@@ -43,4 +42,7 @@ def test_sqlite_upgrade_check_downgrade(tmp_path):
         command.downgrade(alembic_config(conn), "006_web_sessions")
         assert "login_links" not in inspect(conn).get_table_names()
         assert "sessions" in inspect(conn).get_table_names()
+    with engine.begin() as conn:
+        command.upgrade(alembic_config(conn), "head")
+        _check(conn)  # the models match the migrations at head
     engine.dispose()
