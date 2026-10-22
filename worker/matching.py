@@ -28,12 +28,39 @@ _SENIORITY_PATTERNS = [
     ("senior", r"\b(senior|sr\.?)\b"),
     ("mid", r"\b(mid[- ]level|intermediate)\b"),
 ]
+# "...in the US" that is about hours, not residence ("able to work in the US time zone").
+_NOT_HOURS = r"(?!\s*(time|hours|timezone|tz|business hours|working hours|eastern|pacific|central))"
+_US_UK = r"(us|u\.s\.|usa|united states|uk|united kingdom)"
 _RESTRICTION_PATTERNS = [
-    r"must (be|reside|live) (based )?in the (us|u\.s\.|united states|uk|eu)",
+    rf"must (be|reside|live) (based )?in (the )?({_US_UK[1:-1]}|eu|europe|canada)\b{_NOT_HOURS}",
     r"(us|u\.s\.) citizens? only",
-    r"authori[sz]ed to work in the (us|u\.s\.|united states|uk)",
+    rf"(authori[sz]ed|eligible|legally able) to work in the {_US_UK}\b{_NOT_HOURS}",
+    r"\b(require|requires|need|needs) (us|u\.s\.) work authori[sz]ation",
     r"\b(usa|us|uk|canada|eu) only\b",
+    r"\b(us|u\.s\.)[- ]based (candidates|applicants|employees) only\b",
+    r"\bacross all (us|u\.s\.) locations\b",  # a US-only pay range ("...for new hires across all US locations")
 ]
+_DAYS = r"([1-5]|one|two|three|four|five)"
+# The description asks for office days even when the job is tagged "Remote" (feeds often tag hybrid jobs
+# that way): "working from the office four days per week", "3 days a week in our office", "hybrid policy".
+_OFFICE_PATTERNS = [
+    rf"\b(in|from|at) (the|our) office\b[^.]{{0,30}}?\b{_DAYS} days?\b",
+    rf"\b{_DAYS} days? (a|per|each|every) week (in|at|from) (the|our|an|one of our) offices?\b",
+    rf"\b{_DAYS}[- ]days?[- ](a[- ]week[- ])?in[- ](the[- ])?office\b",
+    r"\bhybrid (work(ing)? )?(policy|schedule|model|arrangement|role|position|setup)\b",
+    r"\bthis (is|will be) a hybrid\b",
+    r"\b(on[- ]?site|in[- ]office) (role|position|only)\b",
+]
+_NEGATION = re.compile(r"\b(not|no|never|isn't|without)\b[^.]{0,20}$")
+
+
+def _office_days_required(desc: str) -> bool:
+    """True when the description asks for office or on-site days. "Not a hybrid role" doesn't count."""
+    for pattern in _OFFICE_PATTERNS:
+        for m in re.finditer(pattern, desc):
+            if not _NEGATION.search(desc[max(0, m.start() - 30) : m.start()]):
+                return True
+    return False
 
 
 @dataclass
@@ -89,6 +116,8 @@ def location_eligibility(posting: JobPosting, profile: CandidateProfile) -> tupl
         return False, f"On-site/hybrid in {posting.location or 'unspecified location'}"
 
     desc = (posting.description or "").lower()
+    if not prefs.accepts_onsite and _office_days_required(desc):
+        return False, "Hybrid/on-site: the description asks for office days"
     for pattern in _RESTRICTION_PATTERNS:
         if re.search(pattern, desc):
             return False, "Description restricts applicants by country"

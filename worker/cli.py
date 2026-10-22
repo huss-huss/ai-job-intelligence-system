@@ -318,6 +318,29 @@ def cmd_set_resume(args) -> int:
     return 0
 
 
+def cmd_rescore(args) -> int:
+    """Rescore every user's recent jobs with the current rules (after a scoring change)."""
+    url = _database_url(args)
+    if not url:
+        return 2
+    _backend_on_path()
+    from datetime import UTC, datetime, timedelta
+
+    from app.models import User
+    from sqlalchemy import select
+    from sqlalchemy.orm import Session
+
+    from worker.user_scoring import rescore_user
+
+    now = datetime.now(UTC)
+    with Session(_engine(url)) as session:
+        for user in session.execute(select(User).order_by(User.id)).scalars():
+            n = rescore_user(session, user, since=now - timedelta(days=args.days), now=now)
+            session.commit()
+            print(f"user #{user.id}: rescored {n} jobs")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="firstfetch", description=__doc__.split("\n")[0])
     parser.add_argument("-v", "--verbose", action="store_true")
@@ -376,6 +399,11 @@ def main(argv: list[str] | None = None) -> int:
     sr.add_argument("path")
     sr.add_argument("--database-url", help="defaults to $DATABASE_URL")
     sr.set_defaults(func=cmd_set_resume)
+
+    rs = sub.add_parser("rescore", help="rescore every user's recent jobs with the current rules")
+    rs.add_argument("--days", type=int, default=30, help="jobs stored in the last N days (default 30)")
+    rs.add_argument("--database-url", help="defaults to $DATABASE_URL")
+    rs.set_defaults(func=cmd_rescore)
 
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO if args.verbose else logging.WARNING, format="%(levelname)s %(message)s")
