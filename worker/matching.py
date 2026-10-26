@@ -109,6 +109,28 @@ def _timezone_only(location: str) -> bool:
     return not rest.strip()
 
 
+# Countries whose names contain a region word: "Johannesburg, South Africa" is one country, not "Africa".
+_REGION_LOOKALIKES = ("south africa", "central african republic")
+# "Anywhere in the US" / "global within Canada" name one place; only "... in the world" stays open.
+_SCOPED_OPEN = re.compile(
+    r"\b(anywhere|worldwide|global(?:ly)?)\s+(?:in|within|across|from)\s+(?:the\s+)?([a-z][a-z .]*)"
+)
+
+
+def _location_matches(part: str, term: str) -> bool:
+    """True when an eligible term (a region, country or "worldwide") really opens this location part."""
+    text = part
+    for name in _REGION_LOOKALIKES:
+        if name != term:
+            text = re.sub(rf"(?<![\w]){re.escape(name)}(?![\w])", " ", text)
+
+    def scope(m: re.Match) -> str:
+        place = m.group(2).strip()
+        return m.group(0) if place in ("world", "world.") else f" {place} "
+
+    return _contains(_SCOPED_OPEN.sub(scope, text), term)
+
+
 def location_eligibility(posting: JobPosting, profile: CandidateProfile) -> tuple[bool | None, str]:
     """True/False when we can tell, None when the posting doesn't say."""
     prefs = profile.location
@@ -129,7 +151,7 @@ def location_eligibility(posting: JobPosting, profile: CandidateProfile) -> tupl
     if all(p in ("remote", "remote job", "fully remote") for p in parts):
         return None, "Remote, but eligible regions not specified"
     for part in parts:
-        if any(_contains(part, term) for term in prefs.eligible_terms):
+        if any(_location_matches(part, term) for term in prefs.eligible_terms):
             return True, f"Open to applicants in {prefs.country} ({posting.location})"
     if _timezone_only(posting.location or ""):
         return None, f"Timezone requirement only ({posting.location})"
