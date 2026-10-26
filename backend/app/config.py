@@ -32,6 +32,10 @@ class Settings(BaseSettings):
     # Vercel Cron sends "Authorization: Bearer <CRON_SECRET>"
     cron_secret: str = ""
 
+    # The cron run starts no new source after this many seconds (0 = no limit), leaving the rest of the
+    # 300 s serverless call for LLM enrichment and the Telegram digest. Sources left out go first next run.
+    discover_max_seconds: float = 100.0
+
     # The owner's API key: "X-Admin-Token: <ADMIN_TOKEN>" reads everything and runs admin operations
     # (the owner's login session can do the same from the dashboard). The cron endpoint has its own
     # CRON_SECRET check.

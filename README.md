@@ -829,6 +829,16 @@ vercel deploy --prod
 cd frontend && vercel link --project firstfetch && vercel deploy --prod
 ```
 
+**Time budget.** The cron run must finish inside one 300 s call, so it starts no new source after
+`DISCOVER_MAX_SECONDS` (100; `0` = no limit) and leaves the rest for LLM enrichment (`LLM_ENRICH_MAX_SECONDS`, 75)
+and the Telegram digest (`TELEGRAM_DIGEST_MAX_SECONDS`, 90). A source already running when the budget runs out
+finishes, so the budget is when the last source may start. Sources are scraped in a rotating order taken from the
+run history: never-scraped sources first, then the one whose last scrape attempt is oldest. Sources left out today
+were attempted earliest, so they go first on the next run, and a failing or slow source moves to the back instead
+of blocking the others. No source is scraped twice before every source has had a turn. Each cron call writes a
+`discover` run with `order`, `processed`, `failed`, `skipped`, `elapsed_seconds` and `max_seconds`, and the
+response lists `skipped` source ids when there are any. No migration: the order comes from the existing `runs` rows.
+
 Everything is private: reads need a login (or `X-Admin-Token`), admin writes the owner's session or
 `X-Admin-Token`, with or without `ADMIN_TOKEN` configured. The interactive API docs are off on Vercel; set
 `API_DOCS=true` on the API project to turn them on (they hold no data, only the route list). For Telegram
@@ -894,7 +904,7 @@ cd frontend && vercel env add NEXT_PUBLIC_TELEGRAM_BOT_USERNAME production && ve
 - Pages are only fetched for postings that aren't stored yet, so rows saved before this feature keep their excerpts.
 - Salary conversion uses fixed assumptions: hourly rates are treated as full-time (2080 h/yr, no unpaid leave), 13th-month pay is ignored, and exchange rates come from a static table dated in `worker/salary.py` (override with `FX_RATES_JSON`). A bare `$` is read as USD, so CAD/AUD listings that write only `$` are slightly over-valued.
 - Salary text without a period marker is taken as annual, so an unlabeled monthly figure ("€5,000") under-scores; currencies outside the table count as unknown.
-- On Vercel each discovery runs inside one function call (up to 300 s) and the Hobby plan allows one cron run per day. Full-description fetching adds at most `FULL_DESCRIPTION_MAX_SECONDS` per source that uses it, plus a few seconds for the last request (40-50 s a day with the defaults). The five sources added for FreeHire, Djinni, We Work Remotely, Jobicy and Working Nomads took 21 s of fetching together in a measured run (FreeHire 8 s for 3 queries plus 6 company pages), and FreeHire stops itself at `max_seconds` (45) if the API is slow. Docker Compose with the RQ worker has neither limit.
+- On Vercel each discovery runs inside one function call (up to 300 s) and the Hobby plan allows one cron run per day. Sources that don't fit in `DISCOVER_MAX_SECONDS` wait for the next day's run (see [Deploying to Vercel](#deploying-to-vercel)). Full-description fetching adds at most `FULL_DESCRIPTION_MAX_SECONDS` per source that uses it, plus a few seconds for the last request (40-50 s a day with the defaults). The five sources added for FreeHire, Djinni, We Work Remotely, Jobicy and Working Nomads took 21 s of fetching together in a measured run (FreeHire 8 s for 3 queries plus 6 company pages), and FreeHire stops itself at `max_seconds` (45) if the API is slow. Docker Compose with the RQ worker has neither limit.
 - The pgvector `embeddings` table exists but isn't used yet. Semantic similarity against a CV is planned as an extra scoring component.
 - Respect each API's terms: Remotive asks for a few requests per day, RemoteOK and Arbeitnow ask for links back to listings, and the boards in [Sources](#sources) have their own notes.
 - Hire probability is a ranking index built from stated facts and fixed curves, not a calibrated probability: nobody has measured that 48 hours or 20 views per applicant is right for every board. FreeHire's `applied_count`/`view_count` count only FreeHire's own users, so they under-state real competition; the other boards publish no counts, so their competition factor is a neutral 0.5.
