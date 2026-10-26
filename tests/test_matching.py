@@ -73,6 +73,15 @@ def test_onsite_job_ineligible_unless_profile_accepts_onsite(profile):
         ("Europe, Africa", True),
         ("EMEA", True),
         ("USA, Canada, USA timezones", False),
+        # A country whose name contains a region word is that country only.
+        ("Johannesburg, GP, South Africa", False),
+        ("Eastern Cape, South Africa", False),
+        ("Remote - Africa", True),
+        ("Africa (incl. South Africa)", True),
+        # "Anywhere"/"worldwide" scoped to one place is that place.
+        ("Remote - Anywhere in the US", False),
+        ("Worldwide within Canada", False),
+        ("Anywhere in the world", True),
         ("Remote", None),
         (None, None),
     ],
