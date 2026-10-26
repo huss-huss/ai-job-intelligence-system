@@ -29,6 +29,29 @@ runtime 47.1 s
 ```
 <sub>Real output from 2026-10-19 using the rules-only extractor (no API key); company names replaced and URL lines left out here.</sub>
 
+## Architecture
+
+```mermaid
+flowchart TD
+    cron["Vercel Cron (daily, 04:00 UTC)"] --> discover["GET /api/cron/discover (FastAPI on Vercel)"]
+    discover --> sources["Source adapters: job APIs, RSS feeds, Greenhouse, Lever (disabled sources skipped)"]
+    sources --> dedupe["Cross-source dedupe"]
+    dedupe --> rules["Rules extraction + scoring: fit, hire probability, location eligibility (hybrid / US-only detection)"]
+    rules --> db[("Neon Postgres: jobs, per-user scores, tracker, LLM usage")]
+    discover --> enrich["LLM extraction for the day's top jobs by rules rank"]
+    enrich --> budget{"Budget guard: monthly cap + daily limits"}
+    budget -->|"within budget"| openai["OpenAI (fallback model if the default is unavailable)"]
+    budget -->|"refused or failed: keep rules facts"| db
+    openai -->|"facts, rescored per user"| db
+    db --> digest["Telegram daily digest"]
+    bot["Telegram bot webhook: /top, /login one-time links, cover letters"] <--> db
+    bot -->|"cover letters"| budget
+    db --> api["Private API (ff_session cookie)"]
+    api --> dash["Next.js dashboard behind Telegram login"]
+```
+
+One daily Vercel Cron request drives the pipeline: every enabled source is fetched, deduplicated and scored by deterministic rules, then the day's best jobs get an OpenAI read inside a hard monthly budget, keeping the rules facts whenever a call is refused or fails. Everything lands in Neon Postgres with a score per user, and the same run sends each user their Telegram digest. The bot and the Next.js dashboard read the same database; the dashboard and API are private, reached through Telegram login or a one-time `/login` link from the bot, which sets the `ff_session` cookie.
+
 ## How it works
 
 ```text
