@@ -55,7 +55,7 @@ def test_digest_never_sends_the_same_job_twice(session, fake_tg):
     assert send(session, fake_tg)["sent"] == 1 and card_titles(fake_tg) == ["<b>Platform Engineer</b>"]
 
 
-def test_digest_skips_ineligible_old_acted_on_and_weak_jobs(session, fake_tg):
+def _skippable_jobs(session):
     unknown = add_job(session, "Python Engineer", company="U", score=70, eligible=None)
     add_job(session, "Ineligible", company="I", score=95, eligible=False)
     add_job(session, "Old", company="O", score=95, created_at=NOW - timedelta(days=8))
@@ -63,7 +63,19 @@ def test_digest_skips_ineligible_old_acted_on_and_weak_jobs(session, fake_tg):
     tracker.set_status(session, oid(session), saved.id, "saved", now=NOW)
     session.commit()
     add_job(session, "Weak", company="W", score=59)
-    send(session, fake_tg)
+    return unknown
+
+
+def test_strict_digest_skips_unknown_ineligible_old_acted_on_and_weak_jobs(session, fake_tg):
+    unknown = _skippable_jobs(session)
+    assert send(session, fake_tg)["candidates"] == 0  # strict (the default): unknown eligibility isn't sent
+    assert card_titles(fake_tg) == []
+    assert tracker.get_application(session, oid(session), unknown.id) is None  # still new: on the dashboard
+
+
+def test_non_strict_digest_also_sends_unknown_eligibility(session, fake_tg):
+    unknown = _skippable_jobs(session)
+    send(session, fake_tg, digest_strict=False)
     assert card_titles(fake_tg) == ["<b>Python Engineer</b>"]
     assert "Eligibility unknown" in fake_tg.sent()[1]["text"]
     assert tracker.get_application(session, oid(session), unknown.id).notified_at is not None

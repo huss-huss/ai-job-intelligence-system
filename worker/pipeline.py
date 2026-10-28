@@ -11,7 +11,7 @@ from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlsplit
 
 from worker.ai import Extraction, Extractor, HeuristicExtractor, LLMExtractor
-from worker.hire import HireResult, estimate_hire_probability, rank_score
+from worker.hire import HireResult, blockers, estimate_hire_probability, rank_score
 from worker.matching import MatchResult, location_eligibility, score_job
 from worker.profile import CandidateProfile
 from worker.sources import HttpClient, JobPosting, SourceError, fetch_postings
@@ -290,6 +290,8 @@ def score_posting(
         eligibility=(eligible, location_reason),
         now=now,
     )
+    match.blockers = blockers(enriched, profile)
+    match.reasons.extend(f"Blocker: {b}" for b in match.blockers)
     hire = estimate_hire_probability(
         enriched,
         profile,

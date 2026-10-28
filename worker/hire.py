@@ -310,6 +310,49 @@ def employment_factor(posting: JobPosting, profile: CandidateProfile) -> tuple[f
     return value, f"{label} (weighted {value:g} in your profile)"
 
 
+# "5+ years of experience", "minimum of 3 years' experience", "3-5 yrs of hands-on Python experience".
+_YEARS_REQUIRED = re.compile(
+    r"\b(?:at\s+least|minimum(?:\s+of)?|min\.?|over|more\s+than)?\s*(\d{1,2})\s*(?:\+|plus)?"
+    r"\s*(?:(?:-|–|to)\s*\d{1,2}\s*\+?\s*)?(?:years?|yrs?)(?:'s?)?(?![\w])(?:\s+of)?(?:\s+[\w/.+#-]+){0,6}?\s+"
+    r"(?:experience|exp)\b"
+    r"|\b(\d{1,2})\s*\+\s*(?:years?|yrs?)\b",  # "5+ years in software engineering": the "+" marks a minimum
+    re.IGNORECASE,
+)
+# "...we have 12 years of experience": the company's history, not a requirement.
+_COMPANY_YEARS = re.compile(r"\b(?:we|our|company|team|founded|since|track\s+record)\b[^.\n]{0,30}$", re.IGNORECASE)
+MAX_REQUIRED_YEARS = 20
+EXPERIENCE_GAP_BLOCK = 3  # asks for this many more years than the profile has: not sent to Telegram
+
+
+def required_years(text: str | None) -> int | None:
+    """The highest minimum years of experience a posting asks for, or None when it doesn't say."""
+    text = text or ""
+    found = []
+    for m in _YEARS_REQUIRED.finditer(text):
+        years = int(m.group(1) or m.group(2))
+        if 0 < years <= MAX_REQUIRED_YEARS and not _COMPANY_YEARS.search(text[max(0, m.start() - 40) : m.start()]):
+            found.append(years)
+    return max(found) if found else None
+
+
+def experience_required(posting: JobPosting) -> int | None:
+    """Minimum years from the source or the LLM when known, else read from the description."""
+    years = posting.extra.get("experience_years_min")
+    return years if isinstance(years, int) and years > 0 else required_years(posting.description)
+
+
+def blockers(posting: JobPosting, profile: CandidateProfile) -> list[str]:
+    """Hard requirements the candidate can't meet. They keep a job out of Telegram (strict digest)."""
+    found = []
+    missing = required_languages(f"{posting.title}\n{posting.description or ''}") - set(profile.languages)
+    if missing:
+        found.append(f"Requires {', '.join(sorted(n.title() for n in missing))}")
+    years = experience_required(posting)
+    if profile.years_experience is not None and years and years - profile.years_experience >= EXPERIENCE_GAP_BLOCK:
+        found.append(f"Asks for {years}+ years of experience (you have {profile.years_experience})")
+    return found
+
+
 def seniority_factor(
     posting: JobPosting, profile: CandidateProfile, seniority: str | None
 ) -> tuple[float, str | None]:
@@ -320,8 +363,8 @@ def seniority_factor(
     distance = min(abs(SENIORITY_LEVELS.index(level) - w) for w in wanted) if wanted else 0
     value = SENIORITY_DISTANCE.get(distance, SENIORITY_FAR)
     reason = f"Seniority fits ({level})" if distance == 0 else f"Seniority {level}: {distance} level(s) off"
-    years = posting.extra.get("experience_years_min")
-    if profile.years_experience is not None and isinstance(years, int) and years > profile.years_experience:
+    years = experience_required(posting)
+    if profile.years_experience is not None and years and years > profile.years_experience:
         value *= 0.5 if years - profile.years_experience <= 2 else 0.25
         reason += f"; asks for {years}+ years (you have {profile.years_experience})"
     return value, reason

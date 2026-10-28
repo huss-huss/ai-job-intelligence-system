@@ -22,6 +22,9 @@ class TelegramSettings(BaseSettings):
     digest_size: int = 5  # at most this many jobs per day
     digest_min_score: float = 60  # 0-100, after feedback adjustments
     digest_max_age_days: int = 7  # only jobs first stored within this many days
+    # Strict: Telegram (digest, /top, /today) only sends jobs confirmed open to the user (eligible, not
+    # "unknown") with no blockers (a required language, far more years). The dashboard still shows all.
+    digest_strict: bool = True
     digest_send_empty: bool = True  # send "no new strong matches" when nothing qualifies
     digest_max_seconds: float = 90  # stop sending (all users) after this long; the cron has 300 s in total
 

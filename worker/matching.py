@@ -63,6 +63,102 @@ def _office_days_required(desc: str) -> bool:
     return False
 
 
+# --------------------------------------------------------------------------- who may apply (description)
+# Sentences like "candidates must reside in South America, Central America or Mexico" or "Role open and
+# available for Latam and Europe remote ONLY" restrict a job tagged "Remote" to a few regions. The places
+# a sentence names are compared with the profile's eligible terms, so "must be based in EMEA" stays open
+# to someone in Ethiopia while "Latam and Europe only" does not. A place followed by "time zone"/"hours"
+# is about working hours, not residence, and is ignored.
+_PLACE_WORDS = [
+    "european union", "europe", "european", "united kingdom", "great britain", "britain", "united states",
+    "north america", "south america", "central america", "latin america", "latam", "the americas",
+    "americas", "canada", "mexico", "brazil", "argentina", "colombia", "chile", "peru", "uruguay",
+    "apac", "asia-pacific", "asia pacific", "southeast asia", "asia", "india", "pakistan", "philippines",
+    "vietnam", "australia", "new zealand", "ukraine", "poland", "germany", "israel", "turkey",
+    "middle east", "mena", "emea", "africa", "worldwide", "anywhere", "global", "globally",
+]
+# Upper-case only, so "join us" or "contact us" never reads as the United States.
+_PLACE_ABBREVIATIONS = r"(?-i:U\.S\.A\.?|U\.S\.|USA|US|U\.K\.|UK|E\.U\.|EU|EEA|LATAM|APAC|EMEA)"
+_PLACE_WORDS_ALT = "|".join(re.escape(w) for w in sorted(_PLACE_WORDS, key=len, reverse=True))
+_PLACE = rf"(?:{_PLACE_WORDS_ALT}|{_PLACE_ABBREVIATIONS})"
+_PLACE_RE = re.compile(rf"(?<![\w.]){_PLACE}(?![\w])", re.IGNORECASE)
+_HOURS_AFTER = re.compile(
+    r"[\s-]*(?:\(|\))?\s*(?:time\s*zones?|timezones?|business\s+hours|working\s+hours|hours|tz|overlap)\b",
+    re.IGNORECASE,
+)
+_WHO_MAY_APPLY = re.compile(
+    r"\b(?:"
+    r"(?:must|should|need\s+to|needs\s+to|required\s+to|have\s+to|has\s+to)\s+(?:be\s+)?"
+    r"(?:reside|residing|live|living|located|based|resident|a\s+resident)(?:\s+(?:in|within|of))?"
+    r"|(?:candidates?|applicants?|contractors?|talent)\s+(?:who\s+(?:are|live|reside)\s+|(?:must|need\s+to|should)\s+be\s+)?"
+    r"(?:based|located|residing|living|from)(?:\s+(?:in|within))?"
+    r"|(?:open|available|restricted|limited|hiring|accepting\s+applications)\s+(?:only\s+)?(?:to|for|in|from)"
+    r"|(?:only|exclusively)\s+(?:from|in|for|within)"
+    r"|remote\s+(?:only\s+)?(?:in|within)"
+    r")\b",
+    re.IGNORECASE,
+)
+_ONLY = re.compile(r"\b(?:only|exclusively)\b", re.IGNORECASE)
+# A list of places right before "only": "Latam and Europe remote ONLY", "EU/UK only".
+_PLACE_LIST_END = re.compile(
+    rf"{_PLACE}(?:\s*(?:,|/|&|\+|\band\b|\bor\b)\s*(?:the\s+)?{_PLACE})*\s*(?:-\s*)?(?:remote\s+|based\s+)?$",
+    re.IGNORECASE,
+)
+_RESTRICTION_NEGATION = re.compile(
+    r"\b(?:not|no|never|without|don't|do\s+not|doesn't|does\s+not|needn't|isn't|aren't)\b[^.]{0,25}$",
+    re.IGNORECASE,
+)
+# Sentence end; a dot after a single capital ("U.S.", "U.K.") doesn't end the sentence.
+_SENTENCE_END = re.compile(r"(?<![A-Z])\.(?:\s|$)|[;!?\n]")
+
+
+def _places(text: str) -> list[str]:
+    """Places named in `text`, minus those followed by "time zone"/"hours"."""
+    found = []
+    for m in _PLACE_RE.finditer(text):
+        if not _HOURS_AFTER.match(text, m.end()):
+            found.append(m.group(0))
+    return found
+
+
+def _place_open(place: str, eligible_terms: list[str]) -> bool:
+    lowered = place.lower().replace(".", "")
+    return any(lowered == term.lower() or _location_matches(lowered, term.lower()) for term in eligible_terms)
+
+
+def _restriction_verdict(places: list[str], eligible_terms: list[str]) -> str | None:
+    """The restricted places when none of them is open to the profile, else None."""
+    if not places or any(_place_open(p, eligible_terms) for p in places):
+        return None
+    return ", ".join(dict.fromkeys(places))
+
+
+def description_region_restriction(description: str | None, eligible_terms: list[str]) -> str | None:
+    """Regions a "who may apply" sentence limits the job to, when none of them is open to the profile.
+
+    None when the description has no such sentence, names no recognizable place, or names a place the
+    profile is open to ("must be based in EMEA" for someone in Ethiopia).
+    """
+    text = description or ""
+    for m in _WHO_MAY_APPLY.finditer(text):
+        if _RESTRICTION_NEGATION.search(text[max(0, m.start() - 40) : m.start()]):
+            continue
+        tail = text[m.end() : m.end() + 160]
+        end = _SENTENCE_END.search(tail)
+        verdict = _restriction_verdict(_places(tail[: end.start()] if end else tail), eligible_terms)
+        if verdict:
+            return verdict
+    for m in _ONLY.finditer(text):
+        head = text[max(0, m.start() - 120) : m.start()]
+        start = max((e.end() for e in _SENTENCE_END.finditer(head)), default=0)
+        listed = _PLACE_LIST_END.search(head[start:])
+        if listed and not _RESTRICTION_NEGATION.search(head[start : start + listed.start()]):
+            verdict = _restriction_verdict(_places(listed.group(0)), eligible_terms)
+            if verdict:
+                return verdict
+    return None
+
+
 @dataclass
 class MatchResult:
     score: int
@@ -70,6 +166,8 @@ class MatchResult:
     breakdown: dict[str, float] = field(default_factory=dict)
     reasons: list[str] = field(default_factory=list)
     matched_skills: list[str] = field(default_factory=list)
+    # Hard requirements this candidate can't meet (a language, many more years): kept out of Telegram.
+    blockers: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return {
@@ -78,6 +176,7 @@ class MatchResult:
             "breakdown": self.breakdown,
             "reasons": self.reasons,
             "matched_skills": self.matched_skills,
+            "blockers": self.blockers,
         }
 
 
@@ -143,6 +242,9 @@ def location_eligibility(posting: JobPosting, profile: CandidateProfile) -> tupl
     for pattern in _RESTRICTION_PATTERNS:
         if re.search(pattern, desc):
             return False, "Description restricts applicants by country"
+    limited_to = description_region_restriction(posting.description, prefs.eligible_terms)
+    if limited_to:
+        return False, f"Description limits applicants to {limited_to}"
 
     loc = (posting.location or "").strip().lower()
     if not loc:

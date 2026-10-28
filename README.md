@@ -70,7 +70,7 @@ One daily Vercel Cron request drives the pipeline: every enabled source is fetch
   |---|---|---|
   | Role | 25 | target title in the job title (5 if only in the description) |
   | Skills | 35 | weighted coverage of your top skills; halved for off-target titles |
-  | Location | 15 | "USA only", work-authorization clauses, and on-site roles make a job **ineligible** (score capped at 20) |
+  | Location | 15 | "USA only", work-authorization clauses, on-site roles, office days, and "who may apply" sentences naming only regions you're not in ("candidates must reside in South America or Mexico", "Latam and Europe remote ONLY") make a job **ineligible** (score capped at 20). "Must be based in EMEA" stays open to Ethiopia; "US hours" / "EU time zone" is about hours, not residence |
   | Seniority | 10 | |
   | Salary | 10 | top of the range, normalized to annual USD, against `min_salary_usd` (5 when unknown) |
   | Recency | 5 | days since the posting went live, or since its last update when the source reports one (see below) |
@@ -282,7 +282,9 @@ you invite (see [Multi-user](#multi-user)).
 
 **Daily digest.** At the end of the daily cron run (`GET /api/cron/discover`, so no extra cron is
 needed) FirstFetch sends every user who hasn't paused it their own digest: up to `TELEGRAM_DIGEST_SIZE` (5) jobs that were stored in the last
-`TELEGRAM_DIGEST_MAX_AGE_DAYS` (7) days, are eligible or of unknown eligibility for *their* profile, they haven't acted
+`TELEGRAM_DIGEST_MAX_AGE_DAYS` (7) days, are **confirmed eligible** for *their* profile with no **blockers** (strict
+mode, `TELEGRAM_DIGEST_STRICT`, on by default; a blocker is a required language they don't speak or 3+ more years of
+experience than their `/experience`; with strict off, unknown eligibility is sent too), they haven't acted
 on yet, were never sent to them before, and score at least `TELEGRAM_DIGEST_MIN_SCORE` (60, after their
 feedback adjustment below) on their own score: `rank` (fit × hire probability) when present, else fit. Each job is
 one message: title, company, location, score (and hire probability when present), the top two reasons and
@@ -309,6 +311,7 @@ In Redis mode, jobs analyzed after the cron request finishes go out in the next 
 | `/salary <min USD/yr>` | `30000`, `30k` or `none` |
 | `/country <name> [ISO code]` | e.g. `/country Kenya ke`; updates the locations you count as eligible |
 | `/seniority <levels>` | any of intern, junior, mid, senior, lead, e.g. `mid,senior` |
+| `/experience <years>` | your years of experience, e.g. `/experience 3`; jobs asking for 3+ more years stay on the dashboard (`none` clears it) |
 | `/employment <types>` | full_time, part_time, contract, internship, optional weights: `full_time,contract:0.6` |
 | `/dashboard` | a private dashboard link with your statuses (shown once; `/dashboard revoke` turns it off) |
 | `/cover <job id>` | a cover letter for that job from your resume (also the ✍️ button under each job; needs `OPENAI_API_KEY`) |
@@ -367,6 +370,7 @@ ignored without a reply, except an invite code (see [Multi-user](#multi-user)).
 | `TELEGRAM_CHAT_ID` | | your chat id, from `/start` |
 | `TELEGRAM_DIGEST_SIZE` | 5 | jobs per digest |
 | `TELEGRAM_DIGEST_MIN_SCORE` | 60 | 0-100, after feedback |
+| `TELEGRAM_DIGEST_STRICT` | true | Telegram (digest, `/top`, `/today`) sends only jobs confirmed open to you with no blockers; the dashboard shows everything, with "Blocker: …" in the reasons |
 | `TELEGRAM_DIGEST_MAX_AGE_DAYS` | 7 | only jobs stored within this many days |
 | `TELEGRAM_DIGEST_SEND_EMPTY` | true | send "no new strong matches" |
 | `TELEGRAM_TIMEZONE` | Africa/Addis_Ababa | times shown in messages |

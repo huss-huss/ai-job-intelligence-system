@@ -55,6 +55,7 @@ COMMANDS = [
     ("salary", "/salary <minimum yearly USD>"),
     ("country", "/country <name> [ISO code]"),
     ("seniority", "/seniority <levels>, e.g. mid,senior"),
+    ("experience", "/experience <years>: your years of experience (none to clear)"),
     ("employment", "/employment <types>, e.g. full_time,contract"),
     ("login", "A one-time link that logs you in to the dashboard"),
     ("dashboard", "A private link to your statuses on the dashboard"),
@@ -124,6 +125,11 @@ def set_paused(session: Session, user: User, paused: bool) -> None:
     session.flush()
 
 
+def telegram_filter(cands: list[tracker.Candidate], settings: TelegramSettings) -> list[tracker.Candidate]:
+    """Strict mode keeps only jobs confirmed open to the user with nothing blocking them."""
+    return [c for c in cands if c.telegram_ready] if settings.digest_strict else cands
+
+
 def send_cards(
     session: Session,
     client: TelegramClient,
@@ -151,7 +157,8 @@ def send_cards(
 
 def cmd_top(ctx: Ctx, _args) -> None:
     users.ensure_scores(ctx.session, ctx.user, ctx.now)
-    cands = tracker.candidates(ctx.session, ctx.user.id, since=ctx.now - timedelta(days=TOP_MAX_AGE_DAYS))[:TOP_SIZE]
+    found = tracker.candidates(ctx.session, ctx.user.id, since=ctx.now - timedelta(days=TOP_MAX_AGE_DAYS))
+    cands = telegram_filter(found, ctx.settings)[:TOP_SIZE]
     if not cands:
         ctx.send("No open matches you haven't acted on yet.")
         return
@@ -161,9 +168,11 @@ def cmd_top(ctx: Ctx, _args) -> None:
 
 def cmd_today(ctx: Ctx, _args) -> None:
     users.ensure_scores(ctx.session, ctx.user, ctx.now)
-    cands = tracker.candidates(ctx.session, ctx.user.id, since=ctx.now - timedelta(days=1))
+    found = tracker.candidates(ctx.session, ctx.user.id, since=ctx.now - timedelta(days=1))
+    cands = telegram_filter(found, ctx.settings)
+    hidden = len(found) - len(cands)
     if not cands:
-        ctx.send("No new open jobs since yesterday.")
+        ctx.send("No new open jobs since yesterday." + _hidden_note(hidden))
         return
     floor = digest_min_score(ctx.user, ctx.settings)
     strong = sum(1 for c in cands if c.points >= floor)
@@ -178,8 +187,19 @@ def cmd_today(ctx: Ctx, _args) -> None:
         lines.append(f"<b>{c.points:.0f}</b> {title}{company} <code>#{c.job.id}</code>")
     if len(cands) > TODAY_LIMIT:
         lines.append(f"…and {len(cands) - TODAY_LIMIT} more on the dashboard.")
+    if hidden:
+        lines.append(_hidden_note(hidden).strip())
     for message in chunk(lines):
         ctx.send(message)
+
+
+def _hidden_note(hidden: int) -> str:
+    if not hidden:
+        return ""
+    return (
+        f"\n{hidden} more with an unconfirmed location or a requirement you don't meet: "
+        "they're on the dashboard."
+    )
 
 
 def cmd_applied(ctx: Ctx, _args) -> None:

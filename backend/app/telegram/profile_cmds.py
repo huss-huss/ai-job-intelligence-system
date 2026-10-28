@@ -220,6 +220,25 @@ def edit_employment(data: dict, args: list[str]) -> str:
     return f"Employment types set to {esc(shown)}."
 
 
+MAX_YEARS = 50
+
+
+def edit_experience(data: dict, args: list[str]) -> str:
+    usage = "Usage: /experience &lt;years&gt;, e.g. /experience 3 (none to clear)"
+    if len(args) != 1:
+        raise Reject(usage)
+    if args[0].lower() in ("none", "clear", "-"):
+        data["years_experience"] = None
+        return "Years of experience cleared: jobs aren't filtered by required years."
+    if not re.fullmatch(r"\d{1,2}", args[0]) or int(args[0]) > MAX_YEARS:
+        raise Reject(usage)
+    data["years_experience"] = int(args[0])
+    return (
+        f"Years of experience set to <b>{int(args[0])}</b>. Jobs asking for "
+        f"{int(args[0]) + 3}+ years stay on the dashboard instead of Telegram."
+    )
+
+
 EDITS: dict[str, Callable[[dict, list[str]], str]] = {
     "skills": edit_skills,
     "titles": edit_titles,
@@ -227,6 +246,7 @@ EDITS: dict[str, Callable[[dict, list[str]], str]] = {
     "country": edit_country,
     "seniority": edit_seniority,
     "employment": edit_employment,
+    "experience": edit_experience,
 }
 
 
@@ -260,11 +280,13 @@ def summary(user) -> str:
         f"Titles: {esc(', '.join(p.target_titles), 600) or 'none'}",
         f"Skills (weight): {esc(skills, 1200)}",
         f"Seniority: {esc(', '.join(p.seniority)) or 'any'}",
+        f"Experience: {f'{p.years_experience} years' if p.years_experience is not None else 'not set'}",
+        f"Languages: {esc(', '.join(p.languages)) or 'english'}",
         f"Country: {esc(p.location.country)} · open to: {esc(', '.join(p.location.eligible_terms), 300)}",
         f"Minimum salary: {salary}",
         f"Employment: {esc(employment)}",
         f"Timezone: {esc(p.timezone)}",
         "",
-        "Change it with /skills, /titles, /salary, /country, /seniority, /employment.",
+        "Change it with /skills, /titles, /salary, /country, /seniority, /experience, /employment.",
     ]
     return "\n".join(lines)

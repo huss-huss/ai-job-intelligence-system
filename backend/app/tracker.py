@@ -234,6 +234,17 @@ class Candidate:
         return value if isinstance(value, bool) else None
 
     @property
+    def blockers(self) -> list[str]:
+        """Hard requirements the user can't meet (see worker.hire.blockers)."""
+        value = self.match.get("blockers")
+        return [str(b) for b in value] if isinstance(value, list) else []
+
+    @property
+    def telegram_ready(self) -> bool:
+        """Confirmed open to the user and nothing blocking: what strict Telegram mode sends."""
+        return self.eligible is True and not self.blockers
+
+    @property
     def hire_probability(self) -> float | None:
         if isinstance(self.analysis, UserJobScore):
             hp = self.analysis.hire_probability
