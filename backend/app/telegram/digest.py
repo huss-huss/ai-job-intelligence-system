@@ -4,7 +4,8 @@ For every user with a chat who hasn't paused it, picks up to their digest size (
 TELEGRAM_DIGEST_SIZE) jobs that
 
 * were stored within TELEGRAM_DIGEST_MAX_AGE_DAYS,
-* are eligible or of unknown eligibility *for that user's profile*,
+* are eligible *for that user's profile* (strict, TELEGRAM_DIGEST_STRICT, the default: confirmed open
+  and nothing blocking such as a required language; with it off, unknown eligibility is fine too),
 * that user hasn't acted on and was never sent before (their applications.notified_at is empty),
 * score at least their minimum (default TELEGRAM_DIGEST_MIN_SCORE) on their own score after their
   own feedback adjustment (app/tracker.py),
@@ -29,7 +30,7 @@ from sqlalchemy.orm import Session
 
 from app import tracker, users
 from app.models import Run, User
-from app.telegram.bot import digest_min_score, digest_size, is_paused, send_cards
+from app.telegram.bot import digest_min_score, digest_size, is_paused, send_cards, telegram_filter
 from app.telegram.client import TelegramClient, TelegramError
 from app.telegram.config import TelegramSettings, telegram_settings
 from app.telegram.render import job_card, zone
@@ -41,13 +42,14 @@ MAX_CONSECUTIVE_FAILURES = 3  # this user's chat keeps failing: stop instead of 
 
 def pick(session: Session, settings: TelegramSettings, now: datetime, user: User) -> list[tracker.Candidate]:
     users.ensure_scores(session, user, now)
-    return tracker.candidates(
+    cands = tracker.candidates(
         session,
         user.id,
         since=now - timedelta(days=settings.digest_max_age_days),
         min_points=digest_min_score(user, settings),
         only_unnotified=True,
-    )[: max(0, digest_size(user, settings))]
+    )
+    return telegram_filter(cands, settings)[: max(0, digest_size(user, settings))]
 
 
 def send_digest(
