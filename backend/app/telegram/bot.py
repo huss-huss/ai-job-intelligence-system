@@ -16,8 +16,9 @@ Nothing here logs chat ids, names, codes or tokens.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy.orm import Session
 
@@ -43,6 +44,7 @@ logger = logging.getLogger(__name__)
 
 COMMANDS = [
     ("top", "Best 5 open matches you haven't acted on"),
+    ("fresh", "/fresh <n>: your n newest open matches you haven't acted on, e.g. /fresh 10"),
     ("today", "Jobs stored since yesterday"),
     ("applied", "Jobs you saved or applied to, with status"),
     ("stats", "Pipeline counts"),
@@ -69,6 +71,9 @@ OWNER_COMMANDS = [
     ("remove", "/remove <user id>: remove a member and delete their data"),
 ]
 TOP_SIZE = 5
+FRESH_DEFAULT = 5
+FRESH_MAX = 15  # one message per job: more than this is spam
+FRESH_MIN_POINTS = 40  # newest first, but not jobs that barely match
 TOP_MAX_AGE_DAYS = 30
 TODAY_LIMIT = 20
 TOAST = {
@@ -163,6 +168,34 @@ def cmd_top(ctx: Ctx, _args) -> None:
         ctx.send("No open matches you haven't acted on yet.")
         return
     ctx.send(f"<b>Top {len(cands)} open matches</b> (not yet acted on)")
+    send_cards(ctx.session, ctx.client, ctx.chat_id, ctx.user, cands, ctx.settings, ctx.now)
+
+
+def _freshness(c: tracker.Candidate) -> datetime:
+    """When the job appeared: the board's posting time when known, else when FirstFetch stored it."""
+    when = c.job.posted_at or c.job.created_at
+    return when if when.tzinfo else when.replace(tzinfo=UTC)
+
+
+def cmd_fresh(ctx: Ctx, args) -> None:
+    usage = f"Usage: /fresh &lt;n&gt; (1-{FRESH_MAX}), e.g. /fresh 10"
+    if len(args) > 1 or (args and not re.fullmatch(r"\d{1,3}", args[0])):
+        ctx.send(usage)
+        return
+    n = int(args[0]) if args else FRESH_DEFAULT
+    if not 1 <= n <= FRESH_MAX:
+        ctx.send(usage)
+        return
+    users.ensure_scores(ctx.session, ctx.user, ctx.now)
+    found = tracker.candidates(
+        ctx.session, ctx.user.id, since=ctx.now - timedelta(days=TOP_MAX_AGE_DAYS), min_points=FRESH_MIN_POINTS
+    )
+    cands = sorted(telegram_filter(found, ctx.settings), key=_freshness, reverse=True)[:n]
+    if not cands:
+        ctx.send("No fresh open matches you haven't acted on yet.")
+        return
+    plural = "es" if len(cands) != 1 else ""
+    ctx.send(f"<b>{len(cands)} freshest open match{plural}</b> (newest first, not yet acted on)")
     send_cards(ctx.session, ctx.client, ctx.chat_id, ctx.user, cands, ctx.settings, ctx.now)
 
 
@@ -400,6 +433,7 @@ HANDLERS = {
     "login": cmd_login,
     "help": cmd_help,
     "top": cmd_top,
+    "fresh": cmd_fresh,
     "today": cmd_today,
     "applied": cmd_applied,
     "stats": cmd_stats,

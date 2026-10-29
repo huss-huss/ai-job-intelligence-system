@@ -300,6 +300,7 @@ In Redis mode, jobs analyzed after the cron request finishes go out in the next 
 | Command | What it does |
 |---|---|
 | `/top` | your best 5 open matches you haven't acted on (last 30 days) |
+| `/fresh <n>` | your n newest open matches you haven't acted on (1-15, default 5), as cards with the same buttons as `/top`; newest by the board's posting time, score ≥ 40, same strict rules |
 | `/today` | jobs stored since yesterday, with your scores |
 | `/applied` | your tracked jobs with status and notes |
 | `/stats` | pipeline counts, your eligibility split, tracker and AI usage (spend vs budget for the owner) |
