@@ -52,6 +52,11 @@ class Settings(BaseSettings):
     full_description_max_pages: int = 10
     full_description_max_seconds: float = 20.0
 
+    # Djinni job pages (worker/sources/djinni_page.py): who may apply, minimum experience and required
+    # languages, which the RSS feed doesn't carry. At most MAX_PAGES pages and MAX_SECONDS per run.
+    djinni_page_max_pages: int = 30
+    djinni_page_max_seconds: float = 40.0
+
     # Webhook alert (optional), fired for jobs at or above the profile's notify_threshold
     alert_webhook_url: str = ""
 

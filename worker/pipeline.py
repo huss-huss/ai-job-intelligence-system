@@ -15,6 +15,7 @@ from worker.hire import HireResult, blockers, estimate_hire_probability, rank_sc
 from worker.matching import MatchResult, location_eligibility, score_job
 from worker.profile import CandidateProfile
 from worker.sources import HttpClient, JobPosting, SourceError, fetch_postings
+from worker.sources.djinni_page import DjinniPageOptions, DjinniPageStats, fetch_djinni_details
 from worker.sources.fulltext import FullTextOptions, FullTextStats, fetch_full_descriptions
 
 logger = logging.getLogger(__name__)
@@ -194,6 +195,7 @@ class DiscoveryReport:
     llm_cost_usd: float = 0.0
     llm_fallbacks: dict[str, int] = field(default_factory=dict)  # reason -> jobs that fell back to rules
     full_descriptions: FullTextStats = field(default_factory=FullTextStats)
+    djinni_pages: DjinniPageStats = field(default_factory=DjinniPageStats)
 
 
 def enrich(posting: JobPosting, extraction: Extraction) -> JobPosting:
@@ -419,8 +421,9 @@ def discover(
             report.per_source[label] = report.per_source.get(label, 0) + len(postings)
             collected.extend(postings)
         unique = dedupe_across_sources(collected)
-        if full_text:
+        if full_text:  # page fetching is on: also read who may apply to each Djinni job
             unique, report.full_descriptions = fetch_full_descriptions(unique, http, full_text)
+            unique, report.djinni_pages = fetch_djinni_details(unique, http, DjinniPageOptions())
     finally:
         if owns_client:
             http.close()
