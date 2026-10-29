@@ -4,7 +4,8 @@ Terms and limits (checked October 2026):
 - Djinni: public RSS at /jobs/rss/. It reads `primary_keyword`, `exp_level`, `english_level`
   and `employment`, returns up to 100 items, and silently ignores anything else (`region`,
   `keywords`, `page`), so unknown keys are refused here rather than sent. Items carry no
-  company or location.
+  company or location; the scrape task reads who may apply from each job page
+  (worker/sources/djinni_page.py).
 - We Work Remotely: one RSS feed per category. Their terms ask for a link back to the listing,
   so the original weworkremotely.com URL is kept as the job URL.
 - Jobicy: /api/v2/remote-jobs with `count`, `geo`, `industry`, `tag`. Their docs ask that

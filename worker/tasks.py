@@ -30,7 +30,7 @@ from worker.config import settings  # noqa: E402
 from worker.notion import NotionSync  # noqa: E402
 from worker.pipeline import ScoredJob, analyze, count_llm, fair_select, score_posting  # noqa: E402
 from worker.profile import CandidateProfile, load_profile  # noqa: E402
-from worker.sources import HttpClient, JobPosting, fetch_postings  # noqa: E402
+from worker.sources import HttpClient, JobPosting, djinni_page, fetch_postings  # noqa: E402
 from worker.sources.base import parse_datetime  # noqa: E402
 from worker.sources.fulltext import FullTextOptions, fetch_full_descriptions  # noqa: E402
 
@@ -83,6 +83,19 @@ def _refresh_meta(existing: JobRaw, p: JobPosting) -> None:
             meta[key] = value
     if meta != (existing.meta or {}):
         existing.meta = meta
+
+
+def _store_djinni_details(unread: list[tuple[JobRaw, JobPosting]], checked: list[JobPosting]) -> list[int]:
+    """Write page facts onto stored Djinni rows; ids of the rows that changed (to re-analyze)."""
+    updated: list[int] = []
+    for (row, before), after in zip(unread, checked, strict=True):
+        if after is before:
+            continue  # page not read this run
+        row.location = _fit(after.location)
+        row.description = after.description
+        row.meta = {**(row.meta or {}), **_meta(after)}
+        updated.append(row.id)
+    return updated
 
 
 def _full_text_options(config: dict) -> FullTextOptions:
@@ -173,16 +186,26 @@ def run_scrape_task(source_id: int, params: dict | None = None) -> dict:
             with HttpClient() as http:
                 postings = fetch_postings(config, http=http)
                 new: list[JobPosting] = []
+                unread: list[tuple[JobRaw, JobPosting]] = []  # stored Djinni jobs whose page wasn't read yet
                 for p in postings:
                     existing = session.execute(
                         select(JobRaw).where(JobRaw.source_id == source_id, JobRaw.content_hash == p.content_hash)
                     ).scalar_one_or_none()
                     if existing:
                         _refresh_meta(existing, p)
+                        stored = _to_posting(existing)
+                        if djinni_page.wants(stored):
+                            unread.append((existing, stored))
                         continue
                     new.append(p)
                 # Only new postings: pages of jobs stored on an earlier run aren't fetched again.
                 new, full_text = fetch_full_descriptions(new, http, _full_text_options(config))
+                # Djinni: who may apply, from each job page. New jobs first, then stored ones still unread.
+                checked, djinni = djinni_page.fetch_djinni_details(
+                    new + [p for _, p in unread], http, djinni_page.DjinniPageOptions.from_settings(settings)
+                )
+                new = checked[: len(new)]
+                updated_ids = _store_djinni_details(unread, checked[len(new) :])
             for p in new:
                 raw = JobRaw(
                     source_id=source_id,
@@ -206,21 +229,24 @@ def run_scrape_task(source_id: int, params: dict | None = None) -> dict:
                 "inserted": len(inserted_ids),
                 "full_descriptions": full_text.as_dict(),
             }
+            if djinni.candidates:
+                run.stats["djinni_pages"] = {**djinni.as_dict(), "updated": len(updated_ids)}
             session.commit()
         except Exception as exc:
             _fail(session, run, exc)
             raise
         run_id = run.id
 
-    if inserted_ids and settings.queue_mode == "inline":
-        analysis = run_analyze_task(inserted_ids)
+    to_analyze = inserted_ids + updated_ids  # stored Djinni jobs are rescored with their new location
+    if to_analyze and settings.queue_mode == "inline":
+        analysis = run_analyze_task(to_analyze)
         return {"ok": True, "run_id": run_id, "inserted": len(inserted_ids), "analysis": analysis}
-    if inserted_ids:
+    if to_analyze:
         from redis import Redis
         from rq import Queue
 
         Queue("default", connection=Redis.from_url(settings.redis_url)).enqueue(
-            run_analyze_task, inserted_ids, job_timeout="15m"
+            run_analyze_task, to_analyze, job_timeout="15m"
         )
     return {"ok": True, "run_id": run_id, "inserted": len(inserted_ids)}
 
